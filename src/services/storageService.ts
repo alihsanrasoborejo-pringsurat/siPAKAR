@@ -212,8 +212,12 @@ class StorageService {
       supabaseConfig: {
         ...initialMadrasahSettings.supabaseConfig,
         ...(saved.supabaseConfig || {}),
-        url: saved.supabaseConfig?.url ?? initialMadrasahSettings.supabaseConfig.url,
-        anonKey: saved.supabaseConfig?.anonKey ?? initialMadrasahSettings.supabaseConfig.anonKey,
+        url:
+          (saved.supabaseConfig?.url || '').trim() ||
+          ((import.meta.env.VITE_SUPABASE_URL as string) || '').trim(),
+        anonKey:
+          (saved.supabaseConfig?.anonKey || '').trim() ||
+          ((import.meta.env.VITE_SUPABASE_ANON_KEY as string) || '').trim(),
         isConnected: isSupabaseConfigured(),
       },
       googleDriveConfig: (() => {

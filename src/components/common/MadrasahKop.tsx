@@ -1,4 +1,5 @@
 import { MadrasahSettings, KopSuratConfig } from '../../types';
+import { DEFAULT_LOGO_URL } from '../../data/initialData';
 
 interface MadrasahKopProps {
   settings: MadrasahSettings;
@@ -56,7 +57,7 @@ export default function MadrasahKop({ settings, subTitle }: MadrasahKopProps) {
     ...(settings.kopSurat || {}),
   };
 
-  const primaryLogoSrc = settings.logoUrl || '/src/assets/images/madrasah_logo_1794281106438.jpg';
+  const primaryLogoSrc = settings.logoUrl || DEFAULT_LOGO_URL;
   const secondaryLogoSrc = kop.logoKananUrl || primaryLogoSrc;
 
   const titleColorClass = TITLE_COLOR_MAP[kop.warnaJudul] || TITLE_COLOR_MAP.emerald;

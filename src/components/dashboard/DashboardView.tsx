@@ -9,6 +9,7 @@ import {
   UserProfile,
 } from '../../types';
 import { formatDateIndo, formatDateTimeIndo } from '../../utils/formatters';
+import { DEFAULT_LOGO_URL } from '../../data/initialData';
 import {
   Inbox,
   Send,
@@ -122,7 +123,7 @@ export default function DashboardView({
         {/* Subtle patterned backdrop */}
         <div className="absolute right-0 top-0 bottom-0 w-1/3 opacity-10 pointer-events-none flex items-center justify-center">
           <img
-            src={settings.logoUrl || '/src/assets/images/madrasah_logo_1794281106438.jpg'}
+            src={settings.logoUrl || DEFAULT_LOGO_URL}
             alt=""
             className="w-64 h-64 object-contain filter invert"
           />
@@ -355,7 +356,7 @@ export default function DashboardView({
         <div className="p-5 bg-white rounded-xl border border-slate-200 shadow-xs space-y-4">
           <div className="border-b border-slate-100 pb-3 flex items-center gap-3">
             <img
-              src={settings.logoUrl || '/src/assets/images/madrasah_logo_1794281106438.jpg'}
+              src={settings.logoUrl || DEFAULT_LOGO_URL}
               alt="Logo"
               className="w-12 h-12 object-contain rounded-full border border-emerald-500/40"
               referrerPolicy="no-referrer"

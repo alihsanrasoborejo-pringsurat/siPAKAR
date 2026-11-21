@@ -200,7 +200,7 @@ export default function PkkmDokumenModal({
     if (isAnyDriveUploadConnected()) {
       setIsUploadingDrive(true);
       try {
-        const meta = await uploadFileSmart(file, 'Arsip Digital', keterangan || file.name);
+        const meta = await uploadFileSmart(file, 'PKKRA', keterangan || file.name);
         setDriveFileId(meta.fileId);
         setDriveUrl(meta.driveUrl);
         setManualDriveLink(meta.driveUrl);

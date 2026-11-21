@@ -1,13 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
-  initGoogleAuth,
-  signInWithGoogle,
-  signOutGoogle,
-  isGoogleDriveConnected,
-  getConnectedGoogleUser,
-} from '../../services/googleAuthService';
-import {
-  getDriveStorageInfo,
   GOOGLE_APPS_SCRIPT_CODE,
   testAppsScriptConnection,
   AppsScriptPingResult,
@@ -18,7 +10,6 @@ import {
   HardDrive,
   CheckCircle2,
   AlertCircle,
-  LogOut,
   ExternalLink,
   Loader2,
   FolderSync,
@@ -26,7 +17,6 @@ import {
   Link2,
   FolderOpen,
   Save,
-  KeyRound,
   Code2,
   Copy,
   Check,
@@ -34,7 +24,6 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { User } from 'firebase/auth';
 
 interface GoogleDriveCardProps {
   onStatusChanged?: (connected: boolean) => void;
@@ -55,19 +44,22 @@ export default function GoogleDriveCard({
     folderIdSuratKeluar: '',
     folderIdSK: '',
     folderIdArsip: '',
+    folderIdPkkm: '',
     serviceAccountEmail: currentSettings.email || 'alihsanrasoborejo@gmail.com',
     isConnected: false,
     driveFolderUrl: '',
     appsScriptUrl: '',
-    activeMode: 'folder-link',
+    activeMode: 'apps-script',
   };
 
-  // Determine initial mode
-  const initialMode: 'apps-script' | 'folder-link' | 'api-login' =
-    driveConfig.activeMode || (driveConfig.appsScriptUrl ? 'apps-script' : 'folder-link');
+  // Default to Google Apps Script mode
+  const initialMode: 'apps-script' | 'folder-link' =
+    driveConfig.activeMode === 'folder-link' && !driveConfig.appsScriptUrl
+      ? 'folder-link'
+      : 'apps-script';
 
   // State
-  const [activeTabMode, setActiveTabMode] = useState<'apps-script' | 'folder-link' | 'api-login'>(initialMode);
+  const [activeTabMode, setActiveTabMode] = useState<'apps-script' | 'folder-link'>(initialMode);
   const [appsScriptUrl, setAppsScriptUrl] = useState(driveConfig.appsScriptUrl || '');
   const [folderUrl, setFolderUrl] = useState(driveConfig.driveFolderUrl || '');
   const [accountEmail, setAccountEmail] = useState(
@@ -77,6 +69,7 @@ export default function GoogleDriveCard({
   const [urlKeluar, setUrlKeluar] = useState(driveConfig.urlSuratKeluar || '');
   const [urlSK, setUrlSK] = useState(driveConfig.urlSK || '');
   const [urlArsip, setUrlArsip] = useState(driveConfig.urlArsip || '');
+  const [urlPkkm, setUrlPkkm] = useState(driveConfig.urlPkkm || '');
   const [showSubFolders, setShowSubFolders] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -86,53 +79,19 @@ export default function GoogleDriveCard({
   const [copiedCode, setCopiedCode] = useState(false);
   const [showScriptCode, setShowScriptCode] = useState(false);
 
-  // Firebase auth state
-  const [connected, setConnected] = useState<boolean>(isGoogleDriveConnected());
-  const [googleUser, setGoogleUser] = useState<User | null>(getConnectedGoogleUser());
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [storageInfo, setStorageInfo] = useState<{ usageBytes?: number; limitBytes?: number } | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isDomainError, setIsDomainError] = useState<boolean>(false);
-
-  useEffect(() => {
-    const unsub = initGoogleAuth(
-      (user) => {
-        setConnected(true);
-        setGoogleUser(user);
-        if (onStatusChanged) onStatusChanged(true);
-        loadStorageInfo();
-      },
-      () => {
-        setConnected(false);
-        setGoogleUser(null);
-        setStorageInfo(null);
-        if (onStatusChanged) onStatusChanged(false);
-      }
-    );
-
-    return () => unsub();
-  }, []);
-
-  const loadStorageInfo = async () => {
-    try {
-      const info = await getDriveStorageInfo();
-      if (info.connected) {
-        setStorageInfo({
-          usageBytes: info.usageBytes,
-          limitBytes: info.limitBytes,
-        });
-      }
-    } catch {
-      // ignore
-    }
-  };
-
   const persistDriveConfig = (partial: Partial<MadrasahSettings['googleDriveConfig']>) => {
     const latest = storageService.getSettings();
-    const updatedDriveConfig: MadrasahSettings['googleDriveConfig'] = {
+    const nextConfig: MadrasahSettings['googleDriveConfig'] = {
       ...latest.googleDriveConfig,
       ...partial,
-      isConnected: true,
+    };
+    const hasConnection = Boolean(
+      nextConfig.appsScriptUrl?.trim().startsWith('https://script.google.com/') ||
+        nextConfig.driveFolderUrl?.trim()
+    );
+    const updatedDriveConfig: MadrasahSettings['googleDriveConfig'] = {
+      ...nextConfig,
+      isConnected: hasConnection,
     };
 
     const newSettings: MadrasahSettings = {
@@ -157,6 +116,7 @@ export default function GoogleDriveCard({
       urlSuratKeluar: urlKeluar.trim(),
       urlSK: urlSK.trim(),
       urlArsip: urlArsip.trim(),
+      urlPkkm: urlPkkm.trim(),
       activeMode: 'apps-script',
     });
     if (onStatusChanged) onStatusChanged(Boolean(cleanUrl));
@@ -186,6 +146,7 @@ export default function GoogleDriveCard({
       const newKeluar = res.subfolders?.['Surat Keluar']?.url || urlKeluar;
       const newSK = res.subfolders?.['Surat Keputusan']?.url || urlSK;
       const newArsip = res.subfolders?.['Arsip Digital']?.url || urlArsip;
+      const newPkkm = res.subfolders?.['PKKRA']?.url || urlPkkm;
       const resolvedEmail = res.ownerEmail || accountEmail;
 
       setFolderUrl(newFolderUrl);
@@ -193,6 +154,7 @@ export default function GoogleDriveCard({
       setUrlKeluar(newKeluar);
       setUrlSK(newSK);
       setUrlArsip(newArsip);
+      setUrlPkkm(newPkkm);
       if (resolvedEmail) setAccountEmail(resolvedEmail);
 
       persistDriveConfig({
@@ -203,10 +165,12 @@ export default function GoogleDriveCard({
         urlSuratKeluar: newKeluar,
         urlSK: newSK,
         urlArsip: newArsip,
+        urlPkkm: newPkkm,
         folderIdSuratMasuk: res.subfolders?.['Surat Masuk']?.id || driveConfig.folderIdSuratMasuk,
         folderIdSuratKeluar: res.subfolders?.['Surat Keluar']?.id || driveConfig.folderIdSuratKeluar,
         folderIdSK: res.subfolders?.['Surat Keputusan']?.id || driveConfig.folderIdSK,
         folderIdArsip: res.subfolders?.['Arsip Digital']?.id || driveConfig.folderIdArsip,
+        folderIdPkkm: res.subfolders?.['PKKRA']?.id || driveConfig.folderIdPkkm,
         activeMode: 'apps-script',
       });
 
@@ -224,46 +188,6 @@ export default function GoogleDriveCard({
     }
   };
 
-  const handleSignIn = async () => {
-    setIsLoading(true);
-    setErrorMessage(null);
-    setIsDomainError(false);
-    try {
-      const res = await signInWithGoogle();
-      setConnected(true);
-      setGoogleUser(res.user);
-      if (onStatusChanged) onStatusChanged(true);
-      await loadStorageInfo();
-    } catch (err: any) {
-      console.error('Google sign in error:', err);
-      const msg = err.message || '';
-      if (msg.includes('unauthorized-domain') || msg.includes('auth/unauthorized-domain') || msg.includes('popup-blocked')) {
-        setIsDomainError(true);
-        setErrorMessage(
-          'Autentikasi Firebase ditolak karena domain web ini belum terdaftar di Authorized Domains Firebase Console. Gunakan Mode Google Apps Script atau Mode Tautan Folder di samping (tanpa login Firebase) yang 100% bebas blokir domain.'
-        );
-      } else {
-        setErrorMessage(err.message || 'Gagal menghubungkan Google Drive via Firebase.');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    if (!confirm('Apakah Anda yakin ingin memutuskan sambungan akun Google Drive?')) return;
-    setIsLoading(true);
-    try {
-      await signOutGoogle();
-      setConnected(false);
-      setGoogleUser(null);
-      setStorageInfo(null);
-      if (onStatusChanged) onStatusChanged(false);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleSaveDriveFolderConfig = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     persistDriveConfig({
@@ -273,18 +197,12 @@ export default function GoogleDriveCard({
       urlSuratKeluar: urlKeluar.trim(),
       urlSK: urlSK.trim(),
       urlArsip: urlArsip.trim(),
+      urlPkkm: urlPkkm.trim(),
       activeMode: 'folder-link',
     });
 
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3000);
-  };
-
-  const formatBytes = (bytes?: number) => {
-    if (!bytes) return '0 MB';
-    const mb = bytes / (1024 * 1024);
-    if (mb < 1024) return `${mb.toFixed(1)} MB`;
-    return `${(mb / 1024).toFixed(2)} GB`;
   };
 
   const isAppsScriptActive = Boolean(appsScriptUrl.trim().startsWith('https://script.google.com/'));
@@ -295,7 +213,11 @@ export default function GoogleDriveCard({
     return (
       <div className="flex items-center justify-between p-2.5 bg-emerald-50/90 rounded-lg border border-emerald-200 text-xs">
         <div className="flex items-center gap-2 truncate">
-          <HardDrive className={`w-4 h-4 shrink-0 ${isAppsScriptActive || isFolderActive ? 'text-emerald-700' : 'text-slate-400'}`} />
+          <HardDrive
+            className={`w-4 h-4 shrink-0 ${
+              isAppsScriptActive || isFolderActive ? 'text-emerald-700' : 'text-slate-400'
+            }`}
+          />
           <div className="truncate">
             <span className="font-semibold text-emerald-950 block truncate">
               {isAppsScriptActive
@@ -337,11 +259,11 @@ export default function GoogleDriveCard({
             <h4 className="font-bold text-emerald-950 text-sm flex items-center gap-2">
               Penyimpanan Google Drive RA
               <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded border border-amber-300">
-                Multi-Perangkat
+                Apps Script Bridge
               </span>
             </h4>
             <p className="text-[11px] text-slate-500">
-              Integrasi arsip digital dan surat dinas {currentSettings.namaMadrasah} ke Google Drive.
+              Upload berkas otomatis ke Google Drive {currentSettings.namaMadrasah} &amp; metadata tersinkron ke Supabase.
             </p>
           </div>
         </div>
@@ -350,23 +272,19 @@ export default function GoogleDriveCard({
           <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-900 bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-400">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> Apps Script Otomatis Aktif
           </span>
-        ) : activeTabMode === 'folder-link' ? (
+        ) : activeTabMode === 'folder-link' && folderUrl ? (
           <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100/90 px-2.5 py-1 rounded-full border border-emerald-300">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> Mode Folder Aktif
           </span>
-        ) : connected ? (
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100/90 px-2.5 py-1 rounded-full border border-emerald-300">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" /> API Drive Terhubung
-          </span>
         ) : (
           <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200">
-            Menunggu URL / Koneksi
+            Menunggu URL Apps Script
           </span>
         )}
       </div>
 
-      {/* Mode Switcher Tabs (3 Modes) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5 p-1 bg-emerald-100/60 rounded-xl border border-emerald-200 text-xs">
+      {/* Mode Switcher Tabs (2 Clean Modes - No Firebase) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 p-1 bg-emerald-100/60 rounded-xl border border-emerald-200 text-xs">
         <button
           type="button"
           onClick={() => setActiveTabMode('apps-script')}
@@ -377,7 +295,7 @@ export default function GoogleDriveCard({
           }`}
         >
           <Code2 className="w-4 h-4 shrink-0" />
-          <span className="truncate">Google Apps Script (Otomatis)</span>
+          <span className="truncate">Google Apps Script (Upload Otomatis)</span>
         </button>
 
         <button
@@ -390,24 +308,11 @@ export default function GoogleDriveCard({
           }`}
         >
           <FolderSync className="w-4 h-4 shrink-0" />
-          <span className="truncate">Tautan Folder (Manual)</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTabMode('api-login')}
-          className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg font-bold transition-all cursor-pointer ${
-            activeTabMode === 'api-login'
-              ? 'bg-[#023126] text-amber-300 shadow-sm'
-              : 'text-slate-700 hover:text-emerald-950'
-          }`}
-        >
-          <KeyRound className="w-4 h-4 shrink-0" />
-          <span className="truncate">API Login Firebase (Opsional)</span>
+          <span className="truncate">Tautan Folder Drive (Manual)</span>
         </button>
       </div>
 
-      {/* TAB 1: GOOGLE APPS SCRIPT BRIDGE (REKOMENDASI UNTUK UNGGAH OTOMATIS TANPA FIREBASE) */}
+      {/* TAB 1: GOOGLE APPS SCRIPT BRIDGE */}
       {activeTabMode === 'apps-script' && (
         <form onSubmit={handleSaveAppsScriptConfig} className="space-y-4 text-xs animate-in fade-in duration-150">
           {/* Benefit Box */}
@@ -416,11 +321,11 @@ export default function GoogleDriveCard({
               <Zap className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
                 <p className="font-bold text-xs">
-                  Unggah Otomatis Langsung ke Google Drive via Google Apps Script (Bebas Error Firebase)
+                  Upload Otomatis ke Google Drive via Google Apps Script + Supabase
                 </p>
                 <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
                   Google Apps Script bertindak sebagai jembatan resmi di dalam akun Google RA Anda (
-                  <span className="font-mono text-emerald-800">{accountEmail || currentSettings.email}</span>). Tanpa perlu login popup atau pengaturan domain Firebase, setiap surat masuk, surat keluar, SK, arsip digital, dan PKKRA yang Anda unggah di siPAKAR akan langsung masuk ke Google Drive dan otomatis dibuatkan folder per kategori.
+                  <span className="font-mono text-emerald-800">{accountEmail || currentSettings.email}</span>). Setiap berkas Surat Masuk, Surat Keluar, SK, Arsip Digital, maupun PKKRA yang diunggah langsung tersimpan di Google Drive sesuai sub-folder kategori, sementara tautan &amp; metadatanya tersimpan di database Supabase.
                 </p>
               </div>
             </div>
@@ -429,7 +334,7 @@ export default function GoogleDriveCard({
             <div className="pt-2 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="font-bold text-emerald-900 block">1. Salin Kode Script</span>
-                <span className="text-slate-600">Klik tombol "Salin Kode Code.gs" di bawah ini.</span>
+                <span className="text-slate-600">Klik tombol &quot;Salin Kode Script (Code.gs)&quot; di bawah ini.</span>
               </div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="font-bold text-emerald-900 block">2. Buka Apps Script</span>
@@ -454,7 +359,9 @@ export default function GoogleDriveCard({
               </div>
               <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="font-bold text-emerald-900 block">4. Tempel URL /exec</span>
-                <span className="text-slate-600">Salin URL Web App berakhiran <code className="bg-slate-200 px-1 rounded">/exec</code> lalu klik Uji Koneksi.</span>
+                <span className="text-slate-600">
+                  Salin URL Web App berakhiran <code className="bg-slate-200 px-1 rounded">/exec</code> lalu klik Uji Koneksi.
+                </span>
               </div>
             </div>
 
@@ -624,6 +531,14 @@ export default function GoogleDriveCard({
                 >
                   <FolderOpen className="w-3 h-3 text-emerald-700" /> Arsip Digital
                 </a>
+                <a
+                  href={urlPkkm || folderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3 text-emerald-700" /> PKKRA
+                </a>
               </div>
             )}
 
@@ -635,7 +550,7 @@ export default function GoogleDriveCard({
                 </div>
               ) : (
                 <span className="text-[11px] text-slate-500">
-                  URL tersinkron ke Supabase agar seluruh perangkat dapat langsung mengunggah ke Drive.
+                  URL tersinkron ke Supabase agar seluruh perangkat langsung mengunggah berkas ke Google Drive.
                 </span>
               )}
 
@@ -659,11 +574,11 @@ export default function GoogleDriveCard({
               <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
                 <p className="font-bold text-xs">
-                  Mode Tautan Folder (Tanpa Script &amp; Tanpa Login Firebase)
+                  Mode Tautan Folder (Pintasan Manual)
                 </p>
                 <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
-                  Cukup tempel tautan folder Google Drive madrasah (
-                  <span className="font-mono text-emerald-800">{accountEmail}</span>) di bawah sebagai pintasan cepat. Jika Anda ingin unggahan berkas masuk otomatis ke Google Drive saat memilih file di siPAKAR, gunakan tab <strong>Google Apps Script (Otomatis)</strong> di sebelah kiri.
+                  Tempel tautan folder Google Drive madrasah (
+                  <span className="font-mono text-emerald-800">{accountEmail}</span>) sebagai pintasan cepat. Untuk unggah berkas otomatis ke Google Drive langsung dari form siPAKAR, gunakan tab <strong>Google Apps Script (Upload Otomatis)</strong>.
                 </p>
               </div>
             </div>
@@ -672,7 +587,7 @@ export default function GoogleDriveCard({
             <div className="pt-2 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
               <div className="p-2 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="font-bold text-emerald-900 block">1. Buat Folder di Drive</span>
-                <span className="text-slate-500">Buka drive.google.com, buat folder "siPAKAR {currentSettings.namaMadrasah}".</span>
+                <span className="text-slate-500">Buka drive.google.com, buat folder &quot;siPAKAR {currentSettings.namaMadrasah}&quot;.</span>
               </div>
               <div className="p-2 bg-slate-50 rounded-lg border border-slate-200">
                 <span className="font-bold text-emerald-900 block">2. Salin Tautan Folder</span>
@@ -715,7 +630,7 @@ export default function GoogleDriveCard({
                 )}
               </div>
               <span className="text-[10px] text-slate-400 mt-1 block">
-                Tautan ini akan terbuka ketika tombol "Folder Drive Madrasah" diklik pada header atau daftar persuratan.
+                Tautan ini akan terbuka ketika tombol &quot;Folder Drive Madrasah&quot; diklik pada header atau daftar persuratan.
               </span>
             </div>
 
@@ -739,7 +654,11 @@ export default function GoogleDriveCard({
                 onClick={() => setShowSubFolders(!showSubFolders)}
                 className="text-xs font-semibold text-emerald-800 hover:text-emerald-950 flex items-center gap-1 cursor-pointer"
               >
-                <span>{showSubFolders ? '▼ Sembunyikan Tautan Sub-Folder' : '▶ Atur Tautan Sub-Folder Per Kategori (Surat Masuk, Surat Keluar, SK, Arsip)'}</span>
+                <span>
+                  {showSubFolders
+                    ? '▼ Sembunyikan Tautan Sub-Folder'
+                    : '▶ Atur Tautan Sub-Folder Per Kategori (Surat Masuk, Surat Keluar, SK, Arsip, PKKRA)'}
+                </span>
               </button>
 
               {showSubFolders && (
@@ -795,48 +714,71 @@ export default function GoogleDriveCard({
                       className="w-full px-3 py-1.5 border border-slate-300 rounded font-mono text-[11px] bg-white"
                     />
                   </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                      URL Folder PKKRA
+                    </label>
+                    <input
+                      type="url"
+                      value={urlPkkm}
+                      onChange={(e) => setUrlPkkm(e.target.value)}
+                      placeholder="https://drive.google.com/drive/folders/..."
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded font-mono text-[11px] bg-white"
+                    />
+                  </div>
                 </div>
               )}
             </div>
 
             {/* Quick Access Folder Buttons */}
-            <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-2">
-              <span className="text-[11px] text-slate-500 font-semibold self-center mr-1">
-                Pintasan Buka Folder:
-              </span>
-              <a
-                href={urlMasuk || folderUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
-              >
-                <FolderOpen className="w-3 h-3 text-emerald-700" /> Surat Masuk
-              </a>
-              <a
-                href={urlKeluar || folderUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
-              >
-                <FolderOpen className="w-3 h-3 text-emerald-700" /> Surat Keluar
-              </a>
-              <a
-                href={urlSK || folderUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
-              >
-                <FolderOpen className="w-3 h-3 text-emerald-700" /> SK Madrasah
-              </a>
-              <a
-                href={urlArsip || folderUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
-              >
-                <FolderOpen className="w-3 h-3 text-emerald-700" /> Arsip Digital
-              </a>
-            </div>
+            {folderUrl && (
+              <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-2">
+                <span className="text-[11px] text-slate-500 font-semibold self-center mr-1">
+                  Pintasan Buka Folder:
+                </span>
+                <a
+                  href={urlMasuk || folderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3 text-emerald-700" /> Surat Masuk
+                </a>
+                <a
+                  href={urlKeluar || folderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3 text-emerald-700" /> Surat Keluar
+                </a>
+                <a
+                  href={urlSK || folderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3 text-emerald-700" /> SK Madrasah
+                </a>
+                <a
+                  href={urlArsip || folderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3 text-emerald-700" /> Arsip Digital
+                </a>
+                <a
+                  href={urlPkkm || folderUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] transition-colors"
+                >
+                  <FolderOpen className="w-3 h-3 text-emerald-700" /> PKKRA
+                </a>
+              </div>
+            )}
 
             {/* Action Bar */}
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
@@ -859,117 +801,6 @@ export default function GoogleDriveCard({
             </div>
           </div>
         </form>
-      )}
-
-      {/* TAB 3: MODE API LOGIN FIREBASE (OPSIONAL / TINGKAT LANJUT) */}
-      {activeTabMode === 'api-login' && (
-        <div className="space-y-4 text-xs animate-in fade-in duration-150">
-          <p className="text-slate-600 text-[11px] leading-relaxed">
-            Mode ini menggunakan Google OAuth Popup melalui Firebase Authentication. Jika terjadi kendala domain atau gagal login Firebase, sangat disarankan menggunakan tab <strong>Google Apps Script (Otomatis)</strong> yang bekerja 100% tanpa Firebase.
-          </p>
-
-          {/* Error notice if domain authorization failed */}
-          {errorMessage && (
-            <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-red-900 text-xs space-y-2">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                <span className="font-semibold">{errorMessage}</span>
-              </div>
-              {isDomainError && (
-                <div className="pt-2 border-t border-red-200/80 text-[11px] text-red-800 space-y-2">
-                  <p>
-                    <strong>Solusi Paling Praktis:</strong> Beralih ke <strong>Google Apps Script (Otomatis)</strong> untuk unggah langsung ke Google Drive tanpa autentikasi Firebase.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTabMode('apps-script')}
-                      className="inline-flex items-center gap-1 px-3 py-1 bg-[#023126] text-amber-300 rounded font-bold hover:bg-[#034436] transition-colors cursor-pointer"
-                    >
-                      <Code2 className="w-3.5 h-3.5" /> Gunakan Google Apps Script
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTabMode('folder-link')}
-                      className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-700 text-white rounded font-bold hover:bg-emerald-800 transition-colors cursor-pointer"
-                    >
-                      <FolderSync className="w-3.5 h-3.5" /> Atau Mode Tautan Folder
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {connected ? (
-            <div className="p-3.5 bg-white rounded-xl border border-emerald-200 space-y-2.5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold tracking-wider">
-                    Akun Google Drive API Aktif
-                  </span>
-                  <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    {googleUser?.email || accountEmail || 'Akun Madrasah'}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <a
-                    href="https://drive.google.com"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors"
-                  >
-                    <ExternalLink className="w-3 h-3" /> Buka Google Drive
-                  </a>
-                  <button
-                    type="button"
-                    onClick={handleSignOut}
-                    disabled={isLoading}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors cursor-pointer"
-                  >
-                    <LogOut className="w-3 h-3" /> Putuskan
-                  </button>
-                </div>
-              </div>
-
-              {storageInfo?.limitBytes ? (
-                <div className="pt-2 border-t border-slate-100 text-[10px] text-slate-500 flex items-center justify-between">
-                  <span>Penggunaan Ruang Google Drive:</span>
-                  <span className="font-mono font-medium text-slate-700">
-                    {formatBytes(storageInfo.usageBytes)} dari {formatBytes(storageInfo.limitBytes)}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="p-4 bg-white rounded-xl border border-slate-200 space-y-3">
-              <p className="text-[11px] text-slate-600">
-                Klik tombol di bawah untuk masuk menggunakan akun Google madrasah:
-              </p>
-              <button
-                type="button"
-                onClick={handleSignIn}
-                disabled={isLoading}
-                className="inline-flex items-center gap-3 px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-800 text-xs font-semibold rounded-lg border border-slate-300 shadow-xs hover:shadow transition-all active:scale-95 cursor-pointer disabled:opacity-60"
-              >
-                {isLoading ? (
-                  <Loader2 className="w-5 h-5 text-emerald-700 animate-spin" />
-                ) : (
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5 shrink-0">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
-                )}
-                <span>Masuk dengan Google (Google Drive API)</span>
-              </button>
-            </div>
-          )}
-        </div>
       )}
     </div>
   );

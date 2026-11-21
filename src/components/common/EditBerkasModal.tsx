@@ -58,7 +58,7 @@ export default function EditBerkasModal({
 
   if (!isOpen) return null;
 
-  const getCategoryLabel = (): 'Surat Masuk' | 'Surat Keluar' | 'Surat Keputusan' | 'Arsip Digital' => {
+  const getCategoryLabel = (): 'Surat Masuk' | 'Surat Keluar' | 'Surat Keputusan' | 'Arsip Digital' | 'PKKRA' => {
     switch (tipe) {
       case 'surat-masuk':
         return 'Surat Masuk';
@@ -67,6 +67,7 @@ export default function EditBerkasModal({
       case 'surat-keputusan':
         return 'Surat Keputusan';
       case 'pkkm':
+        return 'PKKRA';
       case 'arsip':
       default:
         return 'Arsip Digital';

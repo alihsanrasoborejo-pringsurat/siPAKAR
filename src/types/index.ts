@@ -193,6 +193,7 @@ export interface MadrasahSettings {
     folderIdSuratKeluar: string;
     folderIdSK: string;
     folderIdArsip: string;
+    folderIdPkkm?: string;
     serviceAccountEmail: string;
     isConnected: boolean;
     driveFolderUrl?: string; // Main Google Drive folder URL for the madrasah
@@ -200,8 +201,9 @@ export interface MadrasahSettings {
     urlSuratKeluar?: string; // Subfolder link for Surat Keluar
     urlSK?: string; // Subfolder link for SK
     urlArsip?: string; // Subfolder link for Arsip
-    appsScriptUrl?: string; // Google Apps Script Web App /exec URL for zero-auth automated Drive upload
-    activeMode?: 'apps-script' | 'folder-link' | 'api-login';
+    urlPkkm?: string; // Subfolder link for PKKRA
+    appsScriptUrl?: string; // Google Apps Script Web App /exec URL for automated Drive upload
+    activeMode?: 'apps-script' | 'folder-link';
   };
   adminPassword?: string; // Password to unlock Administrator mode (default: admin123)
   izinkanNomorManual?: boolean; // Mengizinkan penomoran manual pada surat keluar, SK, dan agenda

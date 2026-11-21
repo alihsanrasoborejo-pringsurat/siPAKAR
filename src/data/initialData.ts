@@ -8,6 +8,9 @@ import {
   KlasifikasiSurat,
   ActivityLog,
 } from '../types';
+import defaultRaLogo from '../assets/images/madrasah_logo_1794281106438.jpg';
+
+export const DEFAULT_LOGO_URL = defaultRaLogo;
 
 export const initialMadrasahSettings: MadrasahSettings = {
   namaMadrasah: "RA AL IHSAN SOBOREJO",
@@ -28,7 +31,7 @@ export const initialMadrasahSettings: MadrasahSettings = {
   nipOperatorMadrasah: "-",
   kodeMadrasah: "RA.23.14.14",
   formatPenomoranSK: "XXX Tahun YYYY",
-  logoUrl: "/src/assets/images/madrasah_logo_1794281106438.jpg",
+  logoUrl: DEFAULT_LOGO_URL,
   kopSuratFormat: "RAUDLATUL ATHFAL AL IHSAN SOBOREJO\nTERAKREDITASI B (SK NOMOR: 558/BAN-PDM/SK/2025)",
   kopSurat: {
     baris1Instansi: "RAUDLATUL ATHFAL",
@@ -56,15 +59,17 @@ export const initialMadrasahSettings: MadrasahSettings = {
     folderIdSuratKeluar: "",
     folderIdSK: "",
     folderIdArsip: "",
+    folderIdPkkm: "",
     serviceAccountEmail: "alihsanrasoborejo@gmail.com",
-    isConnected: false,
+    isConnected: Boolean(((import.meta.env.VITE_APPS_SCRIPT_URL as string) || "").trim()),
     driveFolderUrl: "",
     urlSuratMasuk: "",
     urlSuratKeluar: "",
     urlSK: "",
     urlArsip: "",
-    appsScriptUrl: "",
-    activeMode: "folder-link",
+    urlPkkm: "",
+    appsScriptUrl: ((import.meta.env.VITE_APPS_SCRIPT_URL as string) || "").trim(),
+    activeMode: "apps-script",
   },
   adminPassword: "Nglarangan123#",
   izinkanNomorManual: true,

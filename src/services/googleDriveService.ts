@@ -1,255 +1,15 @@
-import { getGoogleAccessToken, isGoogleDriveConnected } from './googleAuthService';
 import { GoogleDriveMetadata } from '../types';
 
-export interface DriveFolderInfo {
-  id: string;
-  name: string;
-}
-
-const ROOT_FOLDER_NAME = "siPAKAR RA AL IHSAN SOBOREJO";
-
-// Cache created folder IDs in memory
-let cachedRootFolderId: string | null = null;
-const cachedSubFolders: Record<string, string> = {};
-
-/**
- * Helper to ensure a folder exists in Google Drive
- */
-export async function getOrCreateFolder(
-  folderName: string,
-  parentFolderId?: string
-): Promise<string> {
-  const token = await getGoogleAccessToken();
-  if (!token) throw new Error('Token Google Drive tidak tersedia. Silakan hubungkan akun Google.');
-
-  // Check if folder already exists
-  const parentQuery = parentFolderId ? `'${parentFolderId}' in parents and ` : '';
-  const q = `${parentQuery}name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-
-  const searchRes = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
-  );
-
-  if (searchRes.ok) {
-    const data = await searchRes.json();
-    if (data.files && data.files.length > 0) {
-      return data.files[0].id;
-    }
-  }
-
-  // Folder doesn't exist, create it
-  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      name: folderName,
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: parentFolderId ? [parentFolderId] : undefined,
-    }),
-  });
-
-  if (!createRes.ok) {
-    const errData = await createRes.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `Gagal membuat folder "${folderName}" di Google Drive.`);
-  }
-
-  const created = await createRes.json();
-  return created.id;
-}
-
-/**
- * Get or create destination folder for a specific document category
- */
-export async function getDestinationFolderId(
-  category: 'Surat Masuk' | 'Surat Keluar' | 'Surat Keputusan' | 'Arsip Digital'
-): Promise<string> {
-  if (cachedSubFolders[category]) {
-    return cachedSubFolders[category];
-  }
-
-  if (!cachedRootFolderId) {
-    cachedRootFolderId = await getOrCreateFolder(ROOT_FOLDER_NAME);
-  }
-
-  const subFolderId = await getOrCreateFolder(category, cachedRootFolderId);
-  cachedSubFolders[category] = subFolderId;
-  return subFolderId;
-}
-
-/**
- * Upload a real file to Google Drive via multipart upload
- */
-export async function uploadFileToGoogleDrive(
-  file: File,
-  category: 'Surat Masuk' | 'Surat Keluar' | 'Surat Keputusan' | 'Arsip Digital',
-  description?: string
-): Promise<GoogleDriveMetadata> {
-  const token = await getGoogleAccessToken();
-  if (!token) {
-    throw new Error('Akun Google Drive belum terhubung. Silakan hubungkan Google Drive terlebih dahulu.');
-  }
-
-  // 1. Get destination folder in Google Drive
-  let folderId: string | undefined;
-  try {
-    folderId = await getDestinationFolderId(category);
-  } catch (err) {
-    console.warn('Could not ensure category folder, uploading to root:', err);
-  }
-
-  // 2. Prepare metadata and multipart body
-  const metadata = {
-    name: file.name,
-    mimeType: file.type || 'application/pdf',
-    description: description || `Dokumen ${category} RA AL IHSAN SOBOREJO`,
-    parents: folderId ? [folderId] : undefined,
-  };
-
-  const boundary = `-------SIPAS_DRIVE_${Date.now()}-------`;
-  const delimiter = `\r\n--${boundary}\r\n`;
-  const closeDelimiter = `\r\n--${boundary}--`;
-
-  const metadataPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}`;
-  const fileHeader = `${delimiter}Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`;
-
-  // Read file as ArrayBuffer
-  const fileBuffer = await file.arrayBuffer();
-
-  // Combine parts into one blob
-  const multipartBlob = new Blob(
-    [
-      metadataPart,
-      fileHeader,
-      fileBuffer,
-      closeDelimiter,
-    ],
-    { type: `multipart/related; boundary=${boundary}` }
-  );
-
-  // 3. Upload to Google Drive
-  const uploadRes = await fetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,webViewLink,webContentLink',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: multipartBlob,
-    }
-  );
-
-  if (!uploadRes.ok) {
-    const errorJson = await uploadRes.json().catch(() => ({}));
-    throw new Error(
-      errorJson.error?.message || `Gagal mengunggah ${file.name} ke Google Drive (${uploadRes.status})`
-    );
-  }
-
-  const driveFile = await uploadRes.json();
-
-  // 4. (Optional) Set general view permission for link sharing so users can open it easily
-  try {
-    await fetch(`https://www.googleapis.com/drive/v3/files/${driveFile.id}/permissions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        role: 'reader',
-        type: 'anyone',
-      }),
-    });
-  } catch (permErr) {
-    console.info('Could not set anyone-with-link permission:', permErr);
-  }
-
-  const fileId = driveFile.id;
-  const driveUrl = driveFile.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
-  const downloadUrl = driveFile.webContentLink || `https://drive.google.com/uc?id=${fileId}&export=download`;
-
-  return {
-    fileId,
-    folderId,
-    fileName: file.name,
-    fileSize: file.size,
-    fileType: file.type || 'application/pdf',
-    driveUrl,
-    downloadUrl,
-    uploadedAt: new Date().toISOString(),
-    textContent: description || file.name,
-  };
-}
-
-/**
- * Delete a file from Google Drive with mandatory user confirmation
- */
-export async function deleteFileFromGoogleDrive(
-  fileId: string,
-  fileName: string
-): Promise<boolean> {
-  const confirmed = window.confirm(
-    `Apakah Anda yakin ingin menghapus dokumen "${fileName}" dari Google Drive madrasah? Tindakan ini tidak dapat dibatalkan.`
-  );
-  if (!confirmed) return false;
-
-  const token = await getGoogleAccessToken();
-  if (!token) throw new Error('Token Google Drive tidak tersedia.');
-
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  return res.ok || res.status === 204;
-}
-
-/**
- * Test connectivity and get Drive storage quota info
- */
-export async function getDriveStorageInfo(): Promise<{
-  connected: boolean;
-  userEmail?: string;
-  usageBytes?: number;
-  limitBytes?: number;
-}> {
-  if (!isGoogleDriveConnected()) {
-    return { connected: false };
-  }
-
-  const token = await getGoogleAccessToken();
-  if (!token) return { connected: false };
-
-  try {
-    const res = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!res.ok) return { connected: false };
-
-    const data = await res.json();
-    return {
-      connected: true,
-      userEmail: data.user?.emailAddress,
-      usageBytes: parseInt(data.storageQuota?.usage || '0', 10),
-      limitBytes: parseInt(data.storageQuota?.limit || '0', 10),
-    };
-  } catch {
-    return { connected: false };
-  }
-}
+export type DriveCategory =
+  | 'Surat Masuk'
+  | 'Surat Keluar'
+  | 'Surat Keputusan'
+  | 'Arsip Digital'
+  | 'PKKRA';
 
 // ============================================================================
-// GOOGLE APPS SCRIPT WEB APP BRIDGE (TANPA FIREBASE / TANPA LOGIN POPUP)
+// GOOGLE APPS SCRIPT WEB APP BRIDGE (TANPA FIREBASE / LANGSUNG KE GOOGLE DRIVE)
 // ============================================================================
-
-export type DriveCategory = 'Surat Masuk' | 'Surat Keluar' | 'Surat Keputusan' | 'Arsip Digital';
 
 export const GOOGLE_APPS_SCRIPT_CODE = `// ============================================================================
 // JEMBATAN GOOGLE DRIVE UNTUK siPAKAR RA AL IHSAN SOBOREJO
@@ -260,7 +20,7 @@ export const GOOGLE_APPS_SCRIPT_CODE = `// =====================================
 // ============================================================================
 
 var ROOT_FOLDER_NAME = "siPAKAR RA AL IHSAN SOBOREJO";
-var SUBFOLDER_NAMES = ["Surat Masuk", "Surat Keluar", "Surat Keputusan", "Arsip Digital"];
+var SUBFOLDER_NAMES = ["Surat Masuk", "Surat Keluar", "Surat Keputusan", "Arsip Digital", "PKKRA"];
 
 function getOrCreateFolder_(name, parentFolder) {
   var iterator = parentFolder
@@ -387,22 +147,28 @@ function doPost(e) {
 }
 `;
 
+const ENV_APPS_SCRIPT_URL = ((import.meta.env.VITE_APPS_SCRIPT_URL as string) || '').trim();
+
 /**
- * Get saved Google Apps Script Web App URL from localStorage settings
+ * Get saved Google Apps Script Web App URL from settings or Vite env var
  */
 export function getAppsScriptUrl(): string {
   try {
     const raw = localStorage.getItem('sipas_settings');
-    if (!raw) return '';
-    const parsed = JSON.parse(raw);
-    const url = parsed?.googleDriveConfig?.appsScriptUrl;
-    if (typeof url === 'string' && url.trim().startsWith('https://script.google.com/')) {
-      return url.trim();
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const url = parsed?.googleDriveConfig?.appsScriptUrl;
+      if (typeof url === 'string' && url.trim().startsWith('https://script.google.com/')) {
+        return url.trim();
+      }
     }
-    return '';
   } catch {
-    return '';
+    // ignore storage parse error
   }
+  if (ENV_APPS_SCRIPT_URL.startsWith('https://script.google.com/')) {
+    return ENV_APPS_SCRIPT_URL;
+  }
+  return '';
 }
 
 export function isAppsScriptConfigured(): boolean {
@@ -410,10 +176,10 @@ export function isAppsScriptConfigured(): boolean {
 }
 
 /**
- * Returns true if either Google Apps Script Web App OR Firebase Google Drive API is ready
+ * Returns true if Google Apps Script Web App bridge is configured
  */
 export function isAnyDriveUploadConnected(): boolean {
-  return isAppsScriptConfigured() || isGoogleDriveConnected();
+  return isAppsScriptConfigured();
 }
 
 export interface AppsScriptPingResult {
@@ -581,8 +347,7 @@ export async function deleteFileViaAppsScript(
 }
 
 /**
- * Smart uploader: prefers Google Apps Script Web App (no Firebase needed),
- * falls back to Firebase Google Drive API if authenticated.
+ * Upload file to Google Drive via Google Apps Script Web App
  */
 export async function uploadFileSmart(
   file: File,
@@ -592,14 +357,11 @@ export async function uploadFileSmart(
   if (isAppsScriptConfigured()) {
     return uploadFileViaAppsScript(file, category, description);
   }
-  if (isGoogleDriveConnected()) {
-    return uploadFileToGoogleDrive(file, category, description);
-  }
-  throw new Error('Tidak ada metode unggah Google Drive otomatis yang aktif.');
+  throw new Error('URL Web App Google Apps Script belum dikonfigurasi di Pengaturan.');
 }
 
 /**
- * Smart delete with confirmation: routes to Apps Script or Firebase Drive API
+ * Trash file on Google Drive via Google Apps Script with confirmation
  */
 export async function deleteFileSmart(fileId: string, fileName: string): Promise<boolean> {
   if (!fileId || fileId.startsWith('1gdrive-') || fileId.startsWith('gdrive-link-')) {
@@ -612,10 +374,6 @@ export async function deleteFileSmart(fileId: string, fileName: string): Promise
     );
     if (!confirmed) return false;
     return deleteFileViaAppsScript(fileId);
-  }
-
-  if (isGoogleDriveConnected()) {
-    return deleteFileFromGoogleDrive(fileId, fileName);
   }
 
   return false;

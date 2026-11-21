@@ -22,6 +22,7 @@ import {
   initialSuratKeputusan,
   initialArsipDigital,
   initialActivityLogs,
+  DEFAULT_LOGO_URL,
 } from '../data/initialData';
 import { supabase, reinitSupabaseClient, isSupabaseConfigured } from './supabaseClient';
 
@@ -190,10 +191,16 @@ class StorageService {
   getSettings(): MadrasahSettings {
     const saved = this.get<MadrasahSettings>(STORAGE_KEYS.SETTINGS, initialMadrasahSettings);
     const resolvedAppName = !saved.namaAplikasi || saved.namaAplikasi === 'SIPAS' ? 'siPAKAR' : saved.namaAplikasi;
+    const rawLogoUrl = saved.logoUrl?.trim();
+    const resolvedLogoUrl =
+      !rawLogoUrl || rawLogoUrl === '/src/assets/images/madrasah_logo_1794281106438.jpg'
+        ? DEFAULT_LOGO_URL
+        : rawLogoUrl;
     return {
       ...initialMadrasahSettings,
       ...saved,
       namaAplikasi: resolvedAppName,
+      logoUrl: resolvedLogoUrl,
       operatorMadrasah: saved.operatorMadrasah || initialMadrasahSettings.operatorMadrasah,
       nipOperatorMadrasah: saved.nipOperatorMadrasah || initialMadrasahSettings.nipOperatorMadrasah,
       formatPenomoranSK: saved.formatPenomoranSK || initialMadrasahSettings.formatPenomoranSK || 'XXX Tahun YYYY',
@@ -209,14 +216,31 @@ class StorageService {
         anonKey: saved.supabaseConfig?.anonKey ?? initialMadrasahSettings.supabaseConfig.anonKey,
         isConnected: isSupabaseConfigured(),
       },
-      googleDriveConfig: {
-        ...initialMadrasahSettings.googleDriveConfig,
-        ...(saved.googleDriveConfig || {}),
-        driveFolderUrl: saved.googleDriveConfig?.driveFolderUrl ?? initialMadrasahSettings.googleDriveConfig.driveFolderUrl,
-        serviceAccountEmail: saved.googleDriveConfig?.serviceAccountEmail || initialMadrasahSettings.googleDriveConfig.serviceAccountEmail,
-        appsScriptUrl: saved.googleDriveConfig?.appsScriptUrl || '',
-        activeMode: saved.googleDriveConfig?.activeMode || (saved.googleDriveConfig?.appsScriptUrl ? 'apps-script' : 'folder-link'),
-      },
+      googleDriveConfig: (() => {
+        const mergedDrive = {
+          ...initialMadrasahSettings.googleDriveConfig,
+          ...(saved.googleDriveConfig || {}),
+        };
+        const resolvedAppsScriptUrl =
+          (mergedDrive.appsScriptUrl || '').trim() ||
+          ((import.meta.env.VITE_APPS_SCRIPT_URL as string) || '').trim();
+        const rawMode = (saved.googleDriveConfig?.activeMode as string | undefined);
+        const resolvedMode: 'apps-script' | 'folder-link' =
+          rawMode === 'folder-link' && !resolvedAppsScriptUrl ? 'folder-link' : 'apps-script';
+        const resolvedDriveUrl =
+          mergedDrive.driveFolderUrl ?? initialMadrasahSettings.googleDriveConfig.driveFolderUrl;
+
+        return {
+          ...mergedDrive,
+          driveFolderUrl: resolvedDriveUrl,
+          serviceAccountEmail:
+            mergedDrive.serviceAccountEmail ||
+            initialMadrasahSettings.googleDriveConfig.serviceAccountEmail,
+          appsScriptUrl: resolvedAppsScriptUrl,
+          activeMode: resolvedMode,
+          isConnected: Boolean(resolvedAppsScriptUrl || resolvedDriveUrl),
+        };
+      })(),
     };
   }
 

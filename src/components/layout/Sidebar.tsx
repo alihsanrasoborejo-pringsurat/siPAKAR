@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MadrasahSettings, UserProfile } from '../../types';
 import { PKKM_COMPONENTS } from '../../data/pkkmStructure';
+import { DEFAULT_LOGO_URL } from '../../data/initialData';
 import {
   LayoutDashboard,
   Inbox,
@@ -98,7 +99,7 @@ export default function Sidebar({
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="p-0.5 rounded-full bg-gradient-to-tr from-amber-500 via-amber-300 to-amber-500 shadow-sm shrink-0">
               <img
-                src={settings.logoUrl || '/src/assets/images/madrasah_logo_1794281106438.jpg'}
+                src={settings.logoUrl || DEFAULT_LOGO_URL}
                 alt={`Logo ${settings.namaMadrasah}`}
                 className="w-10 h-10 object-contain rounded-full bg-white p-0.5"
                 referrerPolicy="no-referrer"

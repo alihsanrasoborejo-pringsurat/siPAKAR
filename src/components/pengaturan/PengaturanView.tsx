@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { MadrasahSettings, KlasifikasiSurat, UserProfile, KopSuratConfig } from '../../types';
-import { initialMadrasahSettings } from '../../data/initialData';
+import { initialMadrasahSettings, DEFAULT_LOGO_URL } from '../../data/initialData';
 import { storageService } from '../../services/storageService';
 import { testSupabaseConnection, SUPABASE_SQL_SCHEMA } from '../../services/supabaseClient';
 import {
@@ -474,7 +474,7 @@ export default function PengaturanView({
                 <span className="block font-semibold text-slate-700 mb-2">Logo Resmi RA</span>
                 <div className="w-24 h-24 mx-auto p-2 bg-white rounded-full border-2 border-emerald-500 shadow-sm flex items-center justify-center">
                   <img
-                    src={formData.logoUrl || '/src/assets/images/madrasah_logo_1794281106438.jpg'}
+                    src={formData.logoUrl || DEFAULT_LOGO_URL}
                     alt="Logo RA"
                     className="w-20 h-20 object-contain rounded-full"
                     referrerPolicy="no-referrer"

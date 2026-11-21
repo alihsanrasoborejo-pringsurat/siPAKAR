@@ -1,0 +1,2042 @@
+import {
+  SuratMasuk,
+  SuratKeluar,
+  SuratKeputusan,
+  ArsipDigital,
+  PkkmDokumen,
+  MadrasahSettings,
+  KlasifikasiSurat,
+  UserProfile,
+  ActivityLog,
+  Disposisi,
+  DocumentFile,
+} from '../types';
+import {
+  initialMadrasahSettings,
+  initialKlasifikasiSurat,
+  initialUsers,
+  singleAdministrator,
+  guestViewerProfile,
+  initialSuratMasuk,
+  initialSuratKeluar,
+  initialSuratKeputusan,
+  initialArsipDigital,
+  initialActivityLogs,
+} from '../data/initialData';
+import { supabase, reinitSupabaseClient, isSupabaseConfigured } from './supabaseClient';
+
+const STORAGE_KEYS = {
+  SETTINGS: 'sipas_settings',
+  KLASIFIKASI: 'sipas_klasifikasi',
+  USERS: 'sipas_users',
+  ACTIVE_USER: 'sipas_active_user',
+  SURAT_MASUK: 'sipas_surat_masuk',
+  SURAT_KELUAR: 'sipas_surat_keluar',
+  SURAT_KEPUTUSAN: 'sipas_surat_keputusan',
+  ARSIP: 'sipas_arsip',
+  PKKM_DOKUMEN: 'sipas_pkkm_dokumen',
+  ACTIVITY_LOGS: 'sipas_activity_logs',
+  COUNTER_MASUK: 'sipas_counter_masuk_',
+  COUNTER_KELUAR: 'sipas_counter_keluar_',
+  COUNTER_SK: 'sipas_counter_sk_',
+};
+
+const SIPAS_DATA_VERSION_KEY = 'sipas_data_version';
+const CURRENT_CLEAN_VERSION = 'v4_ra_al_ihsan_sobo_clean';
+
+function isRealGoogleDriveId(fileId?: string): boolean {
+  if (!fileId) return false;
+  return (
+    !fileId.startsWith('1gdrive-') &&
+    !fileId.startsWith('gdrive-link-') &&
+    !fileId.startsWith('arsip-empty-') &&
+    fileId !== 'doc-auto'
+  );
+}
+
+function sanitizeFileDocForPersistence(fileDoc?: DocumentFile): DocumentFile | undefined {
+  if (!fileDoc) return undefined;
+  if (!fileDoc.dataBase64) return fileDoc;
+  if (isRealGoogleDriveId(fileDoc.fileId) || fileDoc.dataBase64.length > 450_000) {
+    const { dataBase64: _omitted, ...rest } = fileDoc;
+    return rest;
+  }
+  return fileDoc;
+}
+
+function stripBase64FromCollection(value: unknown, onlyOversized: boolean): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    if (item && typeof item === 'object' && 'fileDoc' in item && item.fileDoc && typeof item.fileDoc === 'object') {
+      const fd = item.fileDoc as DocumentFile;
+      if (
+        fd.dataBase64 &&
+        (!onlyOversized || isRealGoogleDriveId(fd.fileId) || fd.dataBase64.length > 450_000)
+      ) {
+        const { dataBase64: _omitted, ...restFileDoc } = fd;
+        return { ...item, fileDoc: restFileDoc };
+      }
+    }
+    return item;
+  });
+}
+
+class StorageService {
+  private memoryStore = new Map<string, unknown>();
+
+  constructor() {
+    this.ensureCleanProductionData();
+  }
+
+  invalidateCache(key?: string): void {
+    if (key) {
+      this.memoryStore.delete(key);
+    } else {
+      this.memoryStore.clear();
+    }
+  }
+
+  // Wipes all former institution/template records & sets up clean RA AL IHSAN SOBOREJO defaults
+  private ensureCleanProductionData(): void {
+    try {
+      const ver = localStorage.getItem(SIPAS_DATA_VERSION_KEY);
+      if (ver !== CURRENT_CLEAN_VERSION) {
+        this.memoryStore.clear();
+        localStorage.removeItem(STORAGE_KEYS.SURAT_MASUK);
+        localStorage.removeItem(STORAGE_KEYS.SURAT_KELUAR);
+        localStorage.removeItem(STORAGE_KEYS.SURAT_KEPUTUSAN);
+        localStorage.removeItem(STORAGE_KEYS.ARSIP);
+        localStorage.removeItem(STORAGE_KEYS.PKKM_DOKUMEN);
+        localStorage.removeItem(STORAGE_KEYS.KLASIFIKASI);
+        localStorage.removeItem(STORAGE_KEYS.SETTINGS);
+        localStorage.removeItem(STORAGE_KEYS.ACTIVITY_LOGS);
+        localStorage.removeItem('sipas_pkkm_supabase_synced');
+        [2024, 2025, 2026, 2027].forEach((yr) => {
+          localStorage.removeItem(`${STORAGE_KEYS.COUNTER_MASUK}${yr}`);
+          localStorage.removeItem(`${STORAGE_KEYS.COUNTER_KELUAR}${yr}`);
+          localStorage.removeItem(`${STORAGE_KEYS.COUNTER_SK}${yr}`);
+        });
+
+        // Reset data collections strictly to clean empty state for RA AL IHSAN SOBOREJO
+        this.set(STORAGE_KEYS.SURAT_MASUK, initialSuratMasuk);
+        this.set(STORAGE_KEYS.SURAT_KELUAR, initialSuratKeluar);
+        this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, initialSuratKeputusan);
+        this.set(STORAGE_KEYS.ARSIP, initialArsipDigital);
+        this.set(STORAGE_KEYS.PKKM_DOKUMEN, []);
+        this.set(STORAGE_KEYS.KLASIFIKASI, initialKlasifikasiSurat);
+        this.set(STORAGE_KEYS.USERS, [singleAdministrator]);
+        this.set(STORAGE_KEYS.ACTIVE_USER, guestViewerProfile);
+        this.set(STORAGE_KEYS.SETTINGS, initialMadrasahSettings);
+        this.set(STORAGE_KEYS.ACTIVITY_LOGS, initialActivityLogs);
+
+        reinitSupabaseClient(
+          initialMadrasahSettings.supabaseConfig.url,
+          initialMadrasahSettings.supabaseConfig.anonKey
+        );
+
+        localStorage.setItem(SIPAS_DATA_VERSION_KEY, CURRENT_CLEAN_VERSION);
+      } else {
+        const existingSettings = this.get<MadrasahSettings | null>(STORAGE_KEYS.SETTINGS, null);
+        if (existingSettings && existingSettings.kodeMadrasah === 'RA.10.23.14') {
+          existingSettings.kodeMadrasah = 'RA.23.14.14';
+          this.set(STORAGE_KEYS.SETTINGS, existingSettings);
+        }
+      }
+    } catch (e) {
+      console.warn('Storage migration notice:', e);
+    }
+  }
+
+  private get<T>(key: string, defaultValue: T): T {
+    if (this.memoryStore.has(key)) {
+      return this.memoryStore.get(key) as T;
+    }
+    try {
+      const item = localStorage.getItem(key);
+      if (!item) return defaultValue;
+      const parsed = JSON.parse(item) as T;
+      this.memoryStore.set(key, parsed);
+      return parsed;
+    } catch {
+      return defaultValue;
+    }
+  }
+
+  private set<T>(key: string, value: T): void {
+    const compactValue = stripBase64FromCollection(value, true) as T;
+    this.memoryStore.set(key, compactValue);
+    try {
+      const serialized = JSON.stringify(compactValue);
+      if (serialized.length > 1_200_000) {
+        const stripped = stripBase64FromCollection(compactValue, false) as T;
+        this.memoryStore.set(key, stripped);
+        localStorage.setItem(key, JSON.stringify(stripped));
+      } else {
+        localStorage.setItem(key, serialized);
+      }
+    } catch (e) {
+      console.warn('localStorage quota fallback activated for', key, e);
+      try {
+        const stripped = stripBase64FromCollection(compactValue, false) as T;
+        this.memoryStore.set(key, stripped);
+        localStorage.setItem(key, JSON.stringify(stripped));
+      } catch (retryErr) {
+        console.error('Failed to save to localStorage:', retryErr);
+      }
+    }
+  }
+
+  // --- SETTINGS ---
+  getSettings(): MadrasahSettings {
+    const saved = this.get<MadrasahSettings>(STORAGE_KEYS.SETTINGS, initialMadrasahSettings);
+    const resolvedAppName = !saved.namaAplikasi || saved.namaAplikasi === 'SIPAS' ? 'siPAKAR' : saved.namaAplikasi;
+    return {
+      ...initialMadrasahSettings,
+      ...saved,
+      namaAplikasi: resolvedAppName,
+      operatorMadrasah: saved.operatorMadrasah || initialMadrasahSettings.operatorMadrasah,
+      nipOperatorMadrasah: saved.nipOperatorMadrasah || initialMadrasahSettings.nipOperatorMadrasah,
+      formatPenomoranSK: saved.formatPenomoranSK || initialMadrasahSettings.formatPenomoranSK || 'XXX Tahun YYYY',
+      adminPassword: saved.adminPassword || initialMadrasahSettings.adminPassword || 'admin123',
+      kopSurat: {
+        ...initialMadrasahSettings.kopSurat!,
+        ...(saved.kopSurat || {}),
+      },
+      supabaseConfig: {
+        ...initialMadrasahSettings.supabaseConfig,
+        ...(saved.supabaseConfig || {}),
+        url: saved.supabaseConfig?.url ?? initialMadrasahSettings.supabaseConfig.url,
+        anonKey: saved.supabaseConfig?.anonKey ?? initialMadrasahSettings.supabaseConfig.anonKey,
+        isConnected: isSupabaseConfigured(),
+      },
+      googleDriveConfig: {
+        ...initialMadrasahSettings.googleDriveConfig,
+        ...(saved.googleDriveConfig || {}),
+        driveFolderUrl: saved.googleDriveConfig?.driveFolderUrl ?? initialMadrasahSettings.googleDriveConfig.driveFolderUrl,
+        serviceAccountEmail: saved.googleDriveConfig?.serviceAccountEmail || initialMadrasahSettings.googleDriveConfig.serviceAccountEmail,
+        appsScriptUrl: saved.googleDriveConfig?.appsScriptUrl || '',
+        activeMode: saved.googleDriveConfig?.activeMode || (saved.googleDriveConfig?.appsScriptUrl ? 'apps-script' : 'folder-link'),
+      },
+    };
+  }
+
+  saveSettings(settings: MadrasahSettings, user?: UserProfile): void {
+    this.set(STORAGE_KEYS.SETTINGS, settings);
+    if (settings.supabaseConfig) {
+      reinitSupabaseClient(settings.supabaseConfig.url || '', settings.supabaseConfig.anonKey || '');
+    }
+    if (user) {
+      this.logActivity(user, 'Perubahan Pengaturan', 'Pengaturan', undefined, 'Memperbarui identitas RA atau konfigurasi sistem.');
+    }
+
+    // Sync to Supabase if connected
+    if (supabase) {
+      supabase
+        .from('pengaturan_madrasah')
+        .upsert({ id: 'default_setting', data: settings, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.info('Supabase settings sync notice:', error.message);
+        });
+    }
+  }
+
+  // --- KLASIFIKASI SURAT ---
+  getKlasifikasi(): KlasifikasiSurat[] {
+    return this.get<KlasifikasiSurat[]>(STORAGE_KEYS.KLASIFIKASI, initialKlasifikasiSurat);
+  }
+
+  saveKlasifikasi(list: KlasifikasiSurat[]): void {
+    this.set(STORAGE_KEYS.KLASIFIKASI, list);
+  }
+
+  // --- USERS & AUTHENTICATION (1 ADMINISTRATOR + READ-ONLY VIEWERS) ---
+  getUsers(): UserProfile[] {
+    return this.get<UserProfile[]>(STORAGE_KEYS.USERS, [singleAdministrator]);
+  }
+
+  saveUsers(users: UserProfile[]): void {
+    this.set(STORAGE_KEYS.USERS, users);
+  }
+
+  getActiveUser(): UserProfile {
+    const saved = this.get<UserProfile | null>(STORAGE_KEYS.ACTIVE_USER, null);
+    if (saved) return saved;
+    return guestViewerProfile;
+  }
+
+  setActiveUser(user: UserProfile): void {
+    this.set(STORAGE_KEYS.ACTIVE_USER, user);
+  }
+
+  isAdmin(): boolean {
+    const current = this.getActiveUser();
+    return current.role === 'admin';
+  }
+
+  verifyAdminPassword(password: string): boolean {
+    const settings = this.getSettings();
+    const correct = settings.adminPassword || 'admin123';
+    return password.trim() === correct.trim();
+  }
+
+  loginAdmin(password: string): { success: boolean; message?: string } {
+    if (this.verifyAdminPassword(password)) {
+      this.setActiveUser(singleAdministrator);
+      this.logActivity(
+        singleAdministrator,
+        'Masuk Hak Administrator',
+        'Auth',
+        singleAdministrator.id,
+        'Administrator berhasil masuk menggunakan kata sandi. Mode kelola aktif.'
+      );
+      return { success: true };
+    }
+    return {
+      success: false,
+      message: 'Kata sandi Administrator salah. Silakan coba kembali.',
+    };
+  }
+
+  logoutToViewer(): void {
+    const admin = singleAdministrator;
+    this.setActiveUser(guestViewerProfile);
+    this.logActivity(
+      admin,
+      'Keluar dari Administrator',
+      'Auth',
+      undefined,
+      'Kembali ke Mode Hanya Lihat (Guest / Tamu).'
+    );
+  }
+
+  setAdminPassword(newPassword: string, user: UserProfile): void {
+    const settings = this.getSettings();
+    settings.adminPassword = newPassword;
+    this.saveSettings(settings, user);
+    this.logActivity(user, 'Ganti Kata Sandi', 'Auth', user.id, 'Kata sandi Administrator berhasil diperbarui.');
+  }
+
+  // --- ACTIVITY LOGS ---
+  getActivityLogs(): ActivityLog[] {
+    return this.get<ActivityLog[]>(STORAGE_KEYS.ACTIVITY_LOGS, initialActivityLogs);
+  }
+
+  logActivity(
+    user: UserProfile,
+    action: string,
+    entityType: ActivityLog['entityType'],
+    entityId?: string,
+    details: string = ''
+  ): void {
+    const logs = this.getActivityLogs();
+    const newLog: ActivityLog = {
+      id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      userId: user.id,
+      userName: user.name,
+      action,
+      entityType,
+      entityId,
+      details,
+      timestamp: new Date().toISOString(),
+    };
+    logs.unshift(newLog);
+    if (logs.length > 200) logs.pop();
+    this.set(STORAGE_KEYS.ACTIVITY_LOGS, logs);
+
+    // Sync activity log to Supabase
+    if (supabase) {
+      supabase.from('activity_logs').insert({
+        id: newLog.id,
+        user_id: newLog.userId,
+        user_name: newLog.userName,
+        action: newLog.action,
+        entity_type: newLog.entityType,
+        entity_id: newLog.entityId,
+        details: newLog.details,
+        timestamp: newLog.timestamp,
+      }).then(({ error }) => {
+        if (error) console.info('Supabase log sync notice:', error.message);
+      });
+    }
+  }
+
+  // --- SEQUENCE COUNTER ENGINE ---
+  getNextAgendaSuratMasuk(year: number): string {
+    const counterKey = `${STORAGE_KEYS.COUNTER_MASUK}${year}`;
+    const all = this.getSuratMasuk();
+    const existingInYear = all.filter((s) => s.tahunAgenda === year);
+    
+    let maxExisting = 0;
+    existingInYear.forEach((s) => {
+      const num = parseInt(s.nomorAgenda, 10);
+      if (!isNaN(num) && num > maxExisting) maxExisting = num;
+    });
+
+    const storedCounter = this.get<number>(counterKey, maxExisting);
+    const nextVal = Math.max(maxExisting, storedCounter) + 1;
+    return String(nextVal).padStart(3, '0');
+  }
+
+  commitAgendaSuratMasuk(year: number, agendaNumberStr: string): void {
+    const counterKey = `${STORAGE_KEYS.COUNTER_MASUK}${year}`;
+    const num = parseInt(agendaNumberStr, 10);
+    const current = this.get<number>(counterKey, 0);
+    if (num > current) {
+      this.set(counterKey, num);
+    }
+  }
+
+  getNextSuratKeluarInfo(year: number, monthStr: string, kodeKlasifikasi: string): { nomorUrut: number; nomorLengkap: string } {
+    const settings = this.getSettings();
+    const counterKey = `${STORAGE_KEYS.COUNTER_KELUAR}${year}`;
+    const all = this.getSuratKeluar();
+    const existingInYear = all.filter((s) => s.tahunSurat === year);
+
+    let maxExisting = 0;
+    existingInYear.forEach((s) => {
+      if (s.nomorUrut > maxExisting) maxExisting = s.nomorUrut;
+    });
+
+    const storedCounter = this.get<number>(counterKey, maxExisting);
+    const nextVal = Math.max(maxExisting, storedCounter) + 1;
+    const formattedUrut = String(nextVal).padStart(3, '0');
+    const kodeMadrasah = settings.kodeMadrasah || 'RA.23.14.14';
+    const monthFormatted = String(monthStr).padStart(2, '0');
+
+    // Format: 0xx/RA.23.14.14/PP.00/BB/TTTT
+    const nomorLengkap = `${formattedUrut}/${kodeMadrasah}/${kodeKlasifikasi}/${monthFormatted}/${year}`;
+    return {
+      nomorUrut: nextVal,
+      nomorLengkap,
+    };
+  }
+
+  commitSuratKeluarNumber(year: number, nomorUrut: number): void {
+    const counterKey = `${STORAGE_KEYS.COUNTER_KELUAR}${year}`;
+    const current = this.get<number>(counterKey, 0);
+    if (nomorUrut > current) {
+      this.set(counterKey, nomorUrut);
+    }
+  }
+
+  // Next SK Number
+  getNextSKInfo(year: number, monthStr: string): { nomorUrut: number; nomorSK: string } {
+    const settings = this.getSettings();
+    const counterKey = `${STORAGE_KEYS.COUNTER_SK}${year}`;
+    const all = this.getSuratKeputusan();
+    const existingInYear = all.filter((s) => s.tahun === year);
+
+    let maxExisting = 0;
+    existingInYear.forEach((s) => {
+      if (s.nomorUrut > maxExisting) maxExisting = s.nomorUrut;
+    });
+
+    const storedCounter = this.get<number>(counterKey, maxExisting);
+    const nextVal = Math.max(maxExisting, storedCounter) + 1;
+    const formattedUrut = String(nextVal).padStart(3, '0');
+    const template = settings.formatPenomoranSK || 'XXX Tahun YYYY';
+    const nomorSK = template
+      .replace(/XXX/g, formattedUrut)
+      .replace(/YYYY/g, String(year));
+
+    return {
+      nomorUrut: nextVal,
+      nomorSK,
+    };
+  }
+
+  commitSKNumber(year: number, nomorUrut: number): void {
+    const counterKey = `${STORAGE_KEYS.COUNTER_SK}${year}`;
+    const current = this.get<number>(counterKey, 0);
+    if (nomorUrut > current) {
+      this.set(counterKey, nomorUrut);
+    }
+  }
+
+  /**
+   * Manually set the next automatic sequence number for a given year
+   */
+  setManualNextSequence(
+    type: 'masuk' | 'keluar' | 'sk',
+    year: number,
+    nextSequenceNumber: number,
+    user?: UserProfile
+  ): void {
+    const lastUsed = Math.max(0, Math.floor(nextSequenceNumber) - 1);
+    const keyPrefix =
+      type === 'masuk'
+        ? STORAGE_KEYS.COUNTER_MASUK
+        : type === 'keluar'
+        ? STORAGE_KEYS.COUNTER_KELUAR
+        : STORAGE_KEYS.COUNTER_SK;
+    this.set(`${keyPrefix}${year}`, lastUsed);
+    if (user) {
+      const label = type === 'masuk' ? 'Surat Masuk' : type === 'keluar' ? 'Surat Keluar' : 'Surat Keputusan';
+      this.logActivity(
+        user,
+        'Penyesuaian Nomor Urut',
+        'Pengaturan',
+        undefined,
+        `Mengatur nomor urut berikutnya ${label} tahun ${year} ke #${String(Math.max(1, Math.floor(nextSequenceNumber))).padStart(3, '0')}`
+      );
+    }
+  }
+
+  // --- CRUD: SURAT MASUK ---
+  getSuratMasuk(): SuratMasuk[] {
+    return this.get<SuratMasuk[]>(STORAGE_KEYS.SURAT_MASUK, initialSuratMasuk);
+  }
+
+  getSuratMasukById(id: string): SuratMasuk | undefined {
+    return this.getSuratMasuk().find((s) => s.id === id);
+  }
+
+  addSuratMasuk(
+    item: Omit<SuratMasuk, 'id' | 'createdAt' | 'updatedAt' | 'nomorAgenda'> & {
+      customNomorAgenda?: string;
+    },
+    user: UserProfile
+  ): SuratMasuk {
+    const all = this.getSuratMasuk();
+    const agenda = item.customNomorAgenda?.trim() || this.getNextAgendaSuratMasuk(item.tahunAgenda);
+
+    const newItem: SuratMasuk = {
+      ...item,
+      fileDoc: sanitizeFileDocForPersistence(item.fileDoc),
+      id: `sm-${item.tahunAgenda}-${agenda.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      nomorAgenda: agenda,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: user.name,
+    };
+
+    all.unshift(newItem);
+    this.set(STORAGE_KEYS.SURAT_MASUK, all);
+    this.commitAgendaSuratMasuk(item.tahunAgenda, agenda);
+
+    this.logActivity(
+      user,
+      'Registrasi Surat Masuk',
+      'Surat Masuk',
+      newItem.id,
+      `Nomor Agenda #${agenda}: "${newItem.perihal}" dari ${newItem.pengirim}`
+    );
+
+    // Sync to Supabase
+    if (supabase) {
+      supabase.from('surat_masuk').insert({
+        id: newItem.id,
+        nomor_agenda: newItem.nomorAgenda || '001',
+        tahun_agenda: newItem.tahunAgenda || new Date().getFullYear(),
+        nomor_surat_pengirim: newItem.nomorSuratPengirim || '-',
+        tanggal_surat: newItem.tanggalSurat || new Date().toISOString().split('T')[0],
+        tanggal_diterima: newItem.tanggalDiterima || new Date().toISOString().split('T')[0],
+        pengirim: newItem.pengirim || '-',
+        perihal: newItem.perihal || '-',
+        ringkasan: newItem.ringkasan || '',
+        kategori: newItem.kategori || 'Dinas / Resmi',
+        sifat: newItem.sifat || 'Biasa',
+        tujuan_internal: newItem.tujuanInternal || '',
+        status: newItem.status || 'Baru Diterima',
+        catatan: newItem.catatan || '',
+        file_doc: newItem.fileDoc || null,
+        disposisi: newItem.disposisi || null,
+        created_at: newItem.createdAt || new Date().toISOString(),
+        updated_at: newItem.updatedAt || new Date().toISOString(),
+        created_by: newItem.createdBy || 'Administrator',
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase insert notice in surat_masuk:', error.message);
+      });
+    }
+
+    return newItem;
+  }
+
+  updateSuratMasuk(id: string, updates: Partial<SuratMasuk>, user: UserProfile): SuratMasuk {
+    const all = this.getSuratMasuk();
+    const idx = all.findIndex((s) => s.id === id);
+    if (idx === -1) throw new Error('Surat Masuk tidak ditemukan');
+
+    const existing = all[idx];
+    const updated: SuratMasuk = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      nomorAgenda: updates.nomorAgenda || existing.nomorAgenda,
+      tahunAgenda: updates.tahunAgenda || existing.tahunAgenda,
+      updatedAt: new Date().toISOString(),
+    };
+
+    all[idx] = updated;
+    this.set(STORAGE_KEYS.SURAT_MASUK, all);
+
+    this.logActivity(
+      user,
+      'Pembaruan Surat Masuk',
+      'Surat Masuk',
+      updated.id,
+      `Memperbarui Agenda #${updated.nomorAgenda}: "${updated.perihal}"`
+    );
+
+    // Sync to Supabase
+    if (supabase) {
+      supabase.from('surat_masuk').update({
+        nomor_agenda: updated.nomorAgenda || '001',
+        nomor_surat_pengirim: updated.nomorSuratPengirim || '-',
+        tanggal_surat: updated.tanggalSurat,
+        tanggal_diterima: updated.tanggalDiterima,
+        pengirim: updated.pengirim,
+        perihal: updated.perihal,
+        ringkasan: updated.ringkasan || '',
+        kategori: updated.kategori || 'Dinas / Resmi',
+        sifat: updated.sifat || 'Biasa',
+        tujuan_internal: updated.tujuanInternal || '',
+        status: updated.status || 'Baru Diterima',
+        catatan: updated.catatan || '',
+        file_doc: updated.fileDoc || null,
+        disposisi: updated.disposisi || null,
+        updated_at: updated.updatedAt,
+      }).eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase update notice in surat_masuk:', error.message);
+      });
+    }
+
+    return updated;
+  }
+
+  deleteSuratMasuk(id: string, user: UserProfile): void {
+    const all = this.getSuratMasuk();
+    const existing = all.find((s) => s.id === id);
+    if (!existing) return;
+
+    const filtered = all.filter((s) => s.id !== id);
+    this.set(STORAGE_KEYS.SURAT_MASUK, filtered);
+
+    this.logActivity(
+      user,
+      'Penghapusan Surat Masuk',
+      'Surat Masuk',
+      id,
+      `Menghapus Agenda #${existing.nomorAgenda} (${existing.perihal}). Nomor agenda tidak digunakan kembali.`
+    );
+
+    if (supabase) {
+      supabase.from('surat_masuk').delete().eq('id', id).then(({ error }) => {
+        if (error) console.info('Supabase delete notice:', error.message);
+      });
+    }
+  }
+
+  saveDisposisi(suratMasukId: string, disposisiData: Omit<Disposisi, 'id' | 'suratMasukId'>, user: UserProfile): SuratMasuk {
+    const all = this.getSuratMasuk();
+    const idx = all.findIndex((s) => s.id === suratMasukId);
+    if (idx === -1) throw new Error('Surat Masuk tidak ditemukan');
+
+    const disp: Disposisi = {
+      id: `disp-${Date.now()}`,
+      suratMasukId,
+      ...disposisiData,
+      diberikanOleh: user.name,
+    };
+
+    all[idx].disposisi = disp;
+    all[idx].status = 'Didisposisikan';
+    all[idx].updatedAt = new Date().toISOString();
+
+    this.set(STORAGE_KEYS.SURAT_MASUK, all);
+
+    this.logActivity(
+      user,
+      'Pemberian Disposisi',
+      'Surat Masuk',
+      suratMasukId,
+      `Disposisi Agenda #${all[idx].nomorAgenda} kepada ${disp.tujuanDisposisi.join(', ')}: "${disp.catatanKepala}"`
+    );
+
+    if (supabase) {
+      supabase.from('surat_masuk').update({
+        disposisi: disp,
+        status: 'Didisposisikan',
+        updated_at: all[idx].updatedAt,
+      }).eq('id', suratMasukId).then(({ error }) => {
+        if (error) console.info('Supabase disposisi notice:', error.message);
+      });
+    }
+
+    return all[idx];
+  }
+
+  // --- CRUD: SURAT KELUAR ---
+  getSuratKeluar(): SuratKeluar[] {
+    return this.get<SuratKeluar[]>(STORAGE_KEYS.SURAT_KELUAR, initialSuratKeluar);
+  }
+
+  getSuratKeluarById(id: string): SuratKeluar | undefined {
+    return this.getSuratKeluar().find((s) => s.id === id);
+  }
+
+  addSuratKeluar(
+    item: Omit<SuratKeluar, 'id' | 'createdAt' | 'updatedAt' | 'nomorUrut' | 'nomorSuratLengkap'> & {
+      customNomorSurat?: string;
+      customNomorUrut?: number;
+    },
+    user: UserProfile
+  ): SuratKeluar {
+    const all = this.getSuratKeluar();
+    const dateObj = new Date(item.tanggalSurat || new Date().toISOString().split('T')[0]);
+    const year = dateObj.getFullYear() || item.tahunSurat || 2026;
+    const monthStr = String(dateObj.getMonth() + 1).padStart(2, '0');
+
+    const nextInfo = this.getNextSuratKeluarInfo(year, monthStr, item.kodeKlasifikasi);
+
+    const isManual = Boolean(item.customNomorSurat?.trim());
+    const finalNomorLengkap = isManual ? item.customNomorSurat!.trim() : nextInfo.nomorLengkap;
+    const finalNomorUrut =
+      item.customNomorUrut !== undefined && !isNaN(item.customNomorUrut)
+        ? item.customNomorUrut
+        : nextInfo.nomorUrut;
+
+    const newItem: SuratKeluar = {
+      ...item,
+      fileDoc: sanitizeFileDocForPersistence(item.fileDoc),
+      id: `sk-${year}-${String(finalNomorUrut).padStart(3, '0')}-${Date.now().toString(36).substring(4, 7)}`,
+      nomorUrut: finalNomorUrut,
+      nomorSuratLengkap: finalNomorLengkap,
+      tahunSurat: year,
+      bulanSurat: monthStr,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: user.name,
+    };
+
+    all.unshift(newItem);
+    this.set(STORAGE_KEYS.SURAT_KELUAR, all);
+    this.commitSuratKeluarNumber(year, finalNomorUrut);
+
+    this.logActivity(
+      user,
+      'Penerbitan Surat Keluar',
+      'Surat Keluar',
+      newItem.id,
+      `Nomor Resmi ${newItem.nomorSuratLengkap} tujuan "${newItem.tujuanSurat}" (${newItem.perihal})`
+    );
+
+    // Sync to Supabase
+    if (supabase) {
+      supabase.from('surat_keluar').insert({
+        id: newItem.id,
+        nomor_urut: newItem.nomorUrut || 1,
+        nomor_surat_lengkap: newItem.nomorSuratLengkap || '001/RA.23.14.14/PP.00/01/2026',
+        tahun_surat: newItem.tahunSurat || new Date().getFullYear(),
+        bulan_surat: newItem.bulanSurat || '01',
+        kode_klasifikasi: newItem.kodeKlasifikasi || 'PP.00',
+        tanggal_surat: newItem.tanggalSurat || new Date().toISOString().split('T')[0],
+        tujuan_surat: newItem.tujuanSurat || '-',
+        nama_penerima: newItem.namaPenerima || '',
+        jabatan_penerima: newItem.jabatanPenerima || '',
+        alamat_penerima: newItem.alamatPenerima || '',
+        perihal: newItem.perihal || '-',
+        ringkasan: newItem.ringkasan || '',
+        kategori: newItem.kategori || 'Kurikulum',
+        sifat: newItem.sifat || 'Biasa',
+        status: newItem.status || 'Terkirim',
+        catatan: newItem.catatan || '',
+        file_doc: newItem.fileDoc || null,
+        created_at: newItem.createdAt || new Date().toISOString(),
+        updated_at: newItem.updatedAt || new Date().toISOString(),
+        created_by: newItem.createdBy || 'Administrator',
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase surat keluar insert notice:', error.message);
+      });
+    }
+
+    return newItem;
+  }
+
+  updateSuratKeluar(id: string, updates: Partial<SuratKeluar>, user: UserProfile): SuratKeluar {
+    const all = this.getSuratKeluar();
+    const idx = all.findIndex((s) => s.id === id);
+    if (idx === -1) throw new Error('Surat Keluar tidak ditemukan');
+
+    const existing = all[idx];
+    const updated: SuratKeluar = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      nomorUrut: updates.nomorUrut !== undefined ? updates.nomorUrut : existing.nomorUrut,
+      nomorSuratLengkap: updates.nomorSuratLengkap || existing.nomorSuratLengkap,
+      tahunSurat: existing.tahunSurat,
+      updatedAt: new Date().toISOString(),
+    };
+
+    all[idx] = updated;
+    this.set(STORAGE_KEYS.SURAT_KELUAR, all);
+
+    this.logActivity(
+      user,
+      'Pembaruan Surat Keluar',
+      'Surat Keluar',
+      updated.id,
+      `Memperbarui detail surat ${updated.nomorSuratLengkap}`
+    );
+
+    if (supabase) {
+      supabase.from('surat_keluar').update({
+        nomor_surat_lengkap: updated.nomorSuratLengkap,
+        nomor_urut: updated.nomorUrut,
+        tanggal_surat: updated.tanggalSurat,
+        tujuan_surat: updated.tujuanSurat || '-',
+        nama_penerima: updated.namaPenerima || '',
+        jabatan_penerima: updated.jabatanPenerima || '',
+        alamat_penerima: updated.alamatPenerima || '',
+        perihal: updated.perihal || '-',
+        ringkasan: updated.ringkasan || '',
+        kategori: updated.kategori || 'Kurikulum',
+        sifat: updated.sifat || 'Biasa',
+        status: updated.status || 'Terkirim',
+        catatan: updated.catatan || '',
+        file_doc: updated.fileDoc || null,
+        updated_at: updated.updatedAt,
+      }).eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase update notice in surat_keluar:', error.message);
+      });
+    }
+
+    return updated;
+  }
+
+  deleteSuratKeluar(id: string, user: UserProfile): void {
+    const all = this.getSuratKeluar();
+    const existing = all.find((s) => s.id === id);
+    if (!existing) return;
+
+    const filtered = all.filter((s) => s.id !== id);
+    this.set(STORAGE_KEYS.SURAT_KELUAR, filtered);
+
+    this.logActivity(
+      user,
+      'Penghapusan Surat Keluar',
+      'Surat Keluar',
+      id,
+      `Menghapus surat ${existing.nomorSuratLengkap}. Nomor urut #${existing.nomorUrut} tidak digunakan kembali.`
+    );
+
+    if (supabase) {
+      supabase.from('surat_keluar').delete().eq('id', id).then(({ error }) => {
+        if (error) console.info('Supabase delete notice:', error.message);
+      });
+    }
+  }
+
+  // --- CRUD: SURAT KEPUTUSAN (SK) ---
+  getSuratKeputusan(): SuratKeputusan[] {
+    return this.get<SuratKeputusan[]>(STORAGE_KEYS.SURAT_KEPUTUSAN, initialSuratKeputusan);
+  }
+
+  addSuratKeputusan(
+    item: Omit<SuratKeputusan, 'id' | 'createdAt' | 'updatedAt' | 'nomorUrut' | 'nomorSK'> & {
+      customNomorSK?: string;
+      customNomorUrut?: number;
+    },
+    user: UserProfile
+  ): SuratKeputusan {
+    const all = this.getSuratKeputusan();
+    const dateObj = new Date(item.tanggalSK || new Date().toISOString().split('T')[0]);
+    const year = dateObj.getFullYear() || item.tahun || 2026;
+    const monthStr = String(dateObj.getMonth() + 1).padStart(2, '0');
+
+    const nextInfo = this.getNextSKInfo(year, monthStr);
+
+    const isManual = Boolean(item.customNomorSK?.trim());
+    const finalNomorSK = isManual ? item.customNomorSK!.trim() : nextInfo.nomorSK;
+    const finalNomorUrut =
+      item.customNomorUrut !== undefined && !isNaN(item.customNomorUrut)
+        ? item.customNomorUrut
+        : nextInfo.nomorUrut;
+
+    const newItem: SuratKeputusan = {
+      ...item,
+      fileDoc: sanitizeFileDocForPersistence(item.fileDoc),
+      id: `skep-${year}-${String(finalNomorUrut).padStart(3, '0')}-${Date.now().toString(36).substring(4, 7)}`,
+      nomorUrut: finalNomorUrut,
+      nomorSK: finalNomorSK,
+      tahun: year,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: user.name,
+    };
+
+    all.unshift(newItem);
+    this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, all);
+    this.commitSKNumber(year, finalNomorUrut);
+
+    this.logActivity(
+      user,
+      'Penetapan Surat Keputusan',
+      'Surat Keputusan',
+      newItem.id,
+      `SK Nomor ${newItem.nomorSK}: "${newItem.judul}"`
+    );
+
+    if (supabase) {
+      supabase.from('surat_keputusan').insert({
+        id: newItem.id,
+        nomor_sk: newItem.nomorSK || '001 Tahun 2026',
+        nomor_urut: newItem.nomorUrut || 1,
+        tahun: newItem.tahun || new Date().getFullYear(),
+        judul: newItem.judul || '-',
+        tentang: newItem.tentang || '-',
+        tanggal_sk: newItem.tanggalSK || new Date().toISOString().split('T')[0],
+        tahun_pelajaran: newItem.tahunPelajaran || '2026/2027',
+        penandatangan: newItem.penandatangan || 'Kepala Madrasah',
+        jabatan_penandatangan: newItem.jabatanPenandatangan || 'Kepala Madrasah',
+        status: newItem.status || 'Berlaku',
+        ringkasan: newItem.ringkasan || '',
+        file_doc: newItem.fileDoc || null,
+        created_at: newItem.createdAt || new Date().toISOString(),
+        updated_at: newItem.updatedAt || new Date().toISOString(),
+        created_by: newItem.createdBy || 'Administrator',
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase SK insert notice:', error.message);
+      });
+    }
+
+    return newItem;
+  }
+
+  updateSuratKeputusan(id: string, updates: Partial<SuratKeputusan>, user: UserProfile): SuratKeputusan {
+    const all = this.getSuratKeputusan();
+    const idx = all.findIndex((s) => s.id === id);
+    if (idx === -1) throw new Error('SK tidak ditemukan');
+
+    const existing = all[idx];
+    const updated: SuratKeputusan = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      nomorSK: updates.nomorSK || existing.nomorSK,
+      nomorUrut: updates.nomorUrut !== undefined ? updates.nomorUrut : existing.nomorUrut,
+      updatedAt: new Date().toISOString(),
+    };
+
+    all[idx] = updated;
+    this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, all);
+
+    this.logActivity(
+      user,
+      'Pembaruan SK',
+      'Surat Keputusan',
+      updated.id,
+      `Memperbarui ${updated.nomorSK}: "${updated.judul}"`
+    );
+
+    if (supabase) {
+      supabase.from('surat_keputusan').update({
+        nomor_sk: updated.nomorSK,
+        nomor_urut: updated.nomorUrut,
+        judul: updated.judul || '-',
+        tentang: updated.tentang || '-',
+        tanggal_sk: updated.tanggalSK,
+        tahun_pelajaran: updated.tahunPelajaran || '2026/2027',
+        penandatangan: updated.penandatangan || 'Kepala Madrasah',
+        jabatan_penandatangan: updated.jabatanPenandatangan || 'Kepala Madrasah',
+        status: updated.status || 'Berlaku',
+        ringkasan: updated.ringkasan || '',
+        file_doc: updated.fileDoc || null,
+        updated_at: updated.updatedAt,
+      }).eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase SK update notice:', error.message);
+      });
+    }
+
+    return updated;
+  }
+
+  deleteSuratKeputusan(id: string, user: UserProfile): void {
+    const all = this.getSuratKeputusan();
+    const existing = all.find((s) => s.id === id);
+    if (!existing) return;
+
+    const filtered = all.filter((s) => s.id !== id);
+    this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, filtered);
+
+    this.logActivity(
+      user,
+      'Penghapusan SK',
+      'Surat Keputusan',
+      id,
+      `Menghapus ${existing.nomorSK}`
+    );
+
+    if (supabase) {
+      supabase.from('surat_keputusan').delete().eq('id', id).then(({ error }) => {
+        if (error) console.info('Supabase SK delete notice:', error.message);
+      });
+    }
+  }
+
+  // --- CRUD: ARSIP DIGITAL ---
+  getArsipDigital(): ArsipDigital[] {
+    return this.get<ArsipDigital[]>(STORAGE_KEYS.ARSIP, initialArsipDigital);
+  }
+
+  addArsipDigital(item: Omit<ArsipDigital, 'id' | 'createdAt' | 'updatedAt'>, user: UserProfile): ArsipDigital {
+    const all = this.getArsipDigital();
+    const sanitizedFileDoc = sanitizeFileDocForPersistence(item.fileDoc);
+    const newItem: ArsipDigital = {
+      ...item,
+      fileDoc: sanitizedFileDoc || {
+        fileId: `arsip-doc-${Date.now()}`,
+        fileName: 'Dokumen Arsip',
+        fileType: 'application/pdf',
+        fileSize: 0,
+        driveUrl: '',
+        uploadedAt: new Date().toISOString(),
+      },
+      id: `arsip-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: user.name,
+    };
+
+    all.unshift(newItem);
+    this.set(STORAGE_KEYS.ARSIP, all);
+
+    this.logActivity(
+      user,
+      'Pengarsipan Dokumen',
+      'Arsip Digital',
+      newItem.id,
+      `Arsip "${newItem.judulArsip}" [${newItem.kategori}]`
+    );
+
+    if (supabase) {
+      supabase.from('arsip_digital').insert({
+        id: newItem.id,
+        kode_arsip: newItem.kodeArsip || `ARS-${Date.now()}`,
+        judul_arsip: newItem.judulArsip || '-',
+        kategori: newItem.kategori || 'Umum',
+        tahun: newItem.tahun || new Date().getFullYear(),
+        nomor_dokumen_terkait: newItem.nomorDokumenTerait || '',
+        deskripsi: newItem.deskripsi || '',
+        tags: newItem.tags || [],
+        file_doc: newItem.fileDoc,
+        lokasi_fisik: newItem.lokasiFisik || '',
+        created_at: newItem.createdAt || new Date().toISOString(),
+        updated_at: newItem.updatedAt || new Date().toISOString(),
+        created_by: newItem.createdBy || 'Administrator',
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase arsip insert notice:', error.message);
+      });
+    }
+
+    return newItem;
+  }
+
+  deleteArsipDigital(id: string, user: UserProfile): void {
+    const all = this.getArsipDigital();
+    const existing = all.find((a) => a.id === id);
+    if (!existing) return;
+
+    const filtered = all.filter((a) => a.id !== id);
+    this.set(STORAGE_KEYS.ARSIP, filtered);
+
+    this.logActivity(
+      user,
+      'Penghapusan Arsip',
+      'Arsip Digital',
+      id,
+      `Menghapus arsip ${existing.judulArsip}`
+    );
+
+    if (supabase) {
+      supabase.from('arsip_digital').delete().eq('id', id).then(({ error }) => {
+        if (error) console.info('Supabase arsip delete notice:', error.message);
+      });
+    }
+  }
+
+  updateArsipDigital(id: string, updates: Partial<ArsipDigital>, user: UserProfile): ArsipDigital {
+    const all = this.getArsipDigital();
+    const idx = all.findIndex((a) => a.id === id);
+    if (idx === -1) throw new Error('Arsip tidak ditemukan');
+
+    const existing = all[idx];
+    const updated: ArsipDigital = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      updatedAt: new Date().toISOString(),
+    };
+
+    all[idx] = updated;
+    this.set(STORAGE_KEYS.ARSIP, all);
+
+    this.logActivity(
+      user,
+      'Pembaruan Arsip',
+      'Arsip Digital',
+      updated.id,
+      `Memperbarui arsip "${updated.judulArsip}"`
+    );
+
+    if (supabase) {
+      supabase.from('arsip_digital').update({
+        kode_arsip: updated.kodeArsip,
+        judul_arsip: updated.judulArsip,
+        kategori: updated.kategori,
+        tahun: updated.tahun,
+        nomor_dokumen_terkait: updated.nomorDokumenTerait || '',
+        deskripsi: updated.deskripsi || '',
+        tags: updated.tags || [],
+        file_doc: updated.fileDoc || null,
+        lokasi_fisik: updated.lokasiFisik || '',
+        updated_at: updated.updatedAt,
+      }).eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase arsip update notice:', error.message);
+      });
+    }
+
+    return updated;
+  }
+
+  // --- CRUD: PKKM DOKUMEN ---
+  getPkkmDokumen(): PkkmDokumen[] {
+    return this.get<PkkmDokumen[]>(STORAGE_KEYS.PKKM_DOKUMEN, []);
+  }
+
+  addPkkmDokumen(
+    item: Omit<PkkmDokumen, 'id' | 'createdAt' | 'updatedAt' | 'kodeDokumen'> & {
+      kodeDokumen?: string;
+    },
+    user: UserProfile
+  ): PkkmDokumen {
+    const all = this.getPkkmDokumen();
+    const existingSameGroup = all.filter(
+      (d) =>
+        d.komponenId === item.komponenId &&
+        d.subMenuId === item.subMenuId &&
+        (d.subItemId || '') === (item.subItemId || '')
+    );
+    const seq = String(existingSameGroup.length + 1).padStart(3, '0');
+    const compNo =
+      item.komponenId === 'pengembangan_ra'
+        ? '1'
+        : item.komponenId === 'manajerial'
+        ? '2'
+        : item.komponenId === 'kewirausahaan'
+        ? '3'
+        : '4';
+    const generatedCode = item.subItemId
+      ? `PKKRA-${compNo}.${item.subMenuId}.${item.subItemId}-${seq}`
+      : `PKKRA-${compNo}.${item.subMenuId}-${seq}`;
+
+    const now = new Date().toISOString();
+    const newItem: PkkmDokumen = {
+      ...item,
+      kodeDokumen: item.kodeDokumen?.trim() || generatedCode,
+      fileDoc: sanitizeFileDocForPersistence(item.fileDoc),
+      id: `pkkra-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: user.name,
+    };
+
+    all.unshift(newItem);
+    this.set(STORAGE_KEYS.PKKM_DOKUMEN, all);
+
+    this.logActivity(
+      user,
+      'Tambah Dokumen PKKRA',
+      'PKKRA',
+      newItem.id,
+      `${newItem.kodeDokumen}: "${newItem.judulDokumen}"`
+    );
+
+    if (supabase) {
+      supabase
+        .from('pkkm_dokumen')
+        .upsert({
+          id: newItem.id,
+          komponen_id: newItem.komponenId,
+          sub_menu_id: newItem.subMenuId,
+          sub_item_id: newItem.subItemId || null,
+          kode_dokumen: newItem.kodeDokumen,
+          judul_dokumen: newItem.judulDokumen,
+          tahun_ajaran: newItem.tahunAjaran,
+          tahun: newItem.tahun,
+          tanggal_dokumen: newItem.tanggalDokumen || null,
+          penanggung_jawab: newItem.penanggungJawab,
+          status_verifikasi: newItem.statusVerifikasi,
+          keterangan: newItem.keterangan || '',
+          file_doc: newItem.fileDoc || null,
+          created_at: newItem.createdAt,
+          updated_at: newItem.updatedAt,
+          created_by: newItem.createdBy,
+        })
+        .then(({ error }) => {
+          if (error) console.warn('Supabase PKKM insert notice:', error.message);
+        });
+    }
+
+    return newItem;
+  }
+
+  updatePkkmDokumen(id: string, updates: Partial<PkkmDokumen>, user: UserProfile): PkkmDokumen {
+    const all = this.getPkkmDokumen();
+    const idx = all.findIndex((d) => d.id === id);
+    if (idx === -1) throw new Error('Dokumen PKKM tidak ditemukan');
+
+    const existing = all[idx];
+    const updated: PkkmDokumen = {
+      ...existing,
+      ...updates,
+      fileDoc: updates.fileDoc !== undefined ? sanitizeFileDocForPersistence(updates.fileDoc) : existing.fileDoc,
+      id: existing.id,
+      updatedAt: new Date().toISOString(),
+    };
+
+    all[idx] = updated;
+    this.set(STORAGE_KEYS.PKKM_DOKUMEN, all);
+
+    this.logActivity(
+      user,
+      'Pembaruan Dokumen PKKRA',
+      'PKKRA',
+      updated.id,
+      `Memperbarui ${updated.kodeDokumen}: "${updated.judulDokumen}"`
+    );
+
+    if (supabase) {
+      supabase
+        .from('pkkm_dokumen')
+        .upsert({
+          id: updated.id,
+          komponen_id: updated.komponenId,
+          sub_menu_id: updated.subMenuId,
+          sub_item_id: updated.subItemId || null,
+          kode_dokumen: updated.kodeDokumen,
+          judul_dokumen: updated.judulDokumen,
+          tahun_ajaran: updated.tahunAjaran,
+          tahun: updated.tahun,
+          tanggal_dokumen: updated.tanggalDokumen || null,
+          penanggung_jawab: updated.penanggungJawab,
+          status_verifikasi: updated.statusVerifikasi,
+          keterangan: updated.keterangan || '',
+          file_doc: updated.fileDoc || null,
+          created_at: updated.createdAt,
+          updated_at: updated.updatedAt,
+          created_by: updated.createdBy,
+        })
+        .then(({ error }) => {
+          if (error) console.warn('Supabase PKKM update notice:', error.message);
+        });
+    }
+
+    return updated;
+  }
+
+  deletePkkmDokumen(id: string, user: UserProfile): void {
+    const all = this.getPkkmDokumen();
+    const existing = all.find((d) => d.id === id);
+    if (!existing) return;
+
+    const filtered = all.filter((d) => d.id !== id);
+    this.set(STORAGE_KEYS.PKKM_DOKUMEN, filtered);
+
+    this.logActivity(
+      user,
+      'Penghapusan Dokumen PKKRA',
+      'PKKRA',
+      id,
+      `Menghapus bukti fisik PKKRA ${existing.kodeDokumen} (${existing.judulDokumen})`
+    );
+
+    if (supabase) {
+      supabase
+        .from('pkkm_dokumen')
+        .delete()
+        .eq('id', id)
+        .then(({ error }) => {
+          if (error) console.info('Supabase PKKM delete notice:', error.message);
+        });
+    }
+  }
+
+  updateLampiranBerkas(
+    tipe: 'surat-masuk' | 'surat-keluar' | 'surat-keputusan' | 'arsip' | 'pkkm',
+    id: string,
+    fileDoc: DocumentFile | undefined,
+    user: UserProfile
+  ): void {
+    const now = new Date().toISOString();
+    if (tipe === 'surat-masuk') {
+      const all = this.getSuratMasuk();
+      const idx = all.findIndex((s) => s.id === id);
+      if (idx !== -1) {
+        all[idx] = {
+          ...all[idx],
+          fileDoc,
+          updatedAt: now,
+        };
+        this.set(STORAGE_KEYS.SURAT_MASUK, all);
+        this.logActivity(
+          user,
+          'Koreksi Berkas Lampiran',
+          'Surat Masuk',
+          id,
+          fileDoc
+            ? `Memperbarui berkas dokumen Agenda #${all[idx].nomorAgenda}: "${fileDoc.fileName}"`
+            : `Menghapus berkas lampiran dari Agenda #${all[idx].nomorAgenda}`
+        );
+        if (supabase) {
+          supabase.from('surat_masuk').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+        }
+      }
+    } else if (tipe === 'surat-keluar') {
+      const all = this.getSuratKeluar();
+      const idx = all.findIndex((s) => s.id === id);
+      if (idx !== -1) {
+        all[idx] = {
+          ...all[idx],
+          fileDoc,
+          updatedAt: now,
+        };
+        this.set(STORAGE_KEYS.SURAT_KELUAR, all);
+        this.logActivity(
+          user,
+          'Koreksi Berkas Lampiran',
+          'Surat Keluar',
+          id,
+          fileDoc
+            ? `Memperbarui berkas dokumen Surat Keluar ${all[idx].nomorSuratLengkap}: "${fileDoc.fileName}"`
+            : `Menghapus berkas lampiran dari Surat Keluar ${all[idx].nomorSuratLengkap}`
+        );
+        if (supabase) {
+          supabase.from('surat_keluar').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+        }
+      }
+    } else if (tipe === 'surat-keputusan') {
+      const all = this.getSuratKeputusan();
+      const idx = all.findIndex((s) => s.id === id);
+      if (idx !== -1) {
+        all[idx] = {
+          ...all[idx],
+          fileDoc,
+          updatedAt: now,
+        };
+        this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, all);
+        this.logActivity(
+          user,
+          'Koreksi Berkas Lampiran',
+          'Surat Keputusan',
+          id,
+          fileDoc
+            ? `Memperbarui berkas dokumen SK ${all[idx].nomorSK}: "${fileDoc.fileName}"`
+            : `Menghapus berkas lampiran dari SK ${all[idx].nomorSK}`
+        );
+        if (supabase) {
+          supabase.from('surat_keputusan').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+        }
+      }
+    } else if (tipe === 'arsip') {
+      const all = this.getArsipDigital();
+      const idx = all.findIndex((a) => a.id === id);
+      if (idx !== -1) {
+        all[idx] = {
+          ...all[idx],
+          fileDoc: fileDoc || {
+            fileId: `arsip-empty-${Date.now()}`,
+            fileName: 'Tanpa Berkas',
+            fileType: 'application/pdf',
+            fileSize: 0,
+            driveUrl: '',
+            uploadedAt: now,
+          },
+          updatedAt: now,
+        };
+        this.set(STORAGE_KEYS.ARSIP, all);
+        this.logActivity(
+          user,
+          'Koreksi Berkas Lampiran',
+          'Arsip Digital',
+          id,
+          fileDoc
+            ? `Memperbarui berkas dokumen Arsip "${all[idx].judulArsip}": "${fileDoc.fileName}"`
+            : `Mengosongkan berkas dokumen Arsip "${all[idx].judulArsip}"`
+        );
+        if (supabase) {
+          supabase.from('arsip_digital').update({ file_doc: all[idx].fileDoc, updated_at: now }).eq('id', id).then();
+        }
+      }
+    } else if (tipe === 'pkkm') {
+      const all = this.getPkkmDokumen();
+      const idx = all.findIndex((d) => d.id === id);
+      if (idx !== -1) {
+        all[idx] = {
+          ...all[idx],
+          fileDoc,
+          updatedAt: now,
+        };
+        this.set(STORAGE_KEYS.PKKM_DOKUMEN, all);
+        this.logActivity(
+          user,
+          'Koreksi Berkas Lampiran',
+          'PKKRA',
+          id,
+          fileDoc
+            ? `Memperbarui berkas dokumen PKKRA ${all[idx].kodeDokumen}: "${fileDoc.fileName}"`
+            : `Melepas berkas lampiran dari PKKRA ${all[idx].kodeDokumen}`
+        );
+        if (supabase) {
+          supabase.from('pkkm_dokumen').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+        }
+      }
+    }
+  }
+
+  // --- BACKUP & RESTORE ALL DATA ---
+  exportAllDataJSON(): string {
+    const data = {
+      version: '2.0.0',
+      exportedAt: new Date().toISOString(),
+      institution: this.getSettings().namaMadrasah || "RA AL IHSAN SOBOREJO",
+      supabaseUrl: this.getSettings().supabaseConfig.url,
+      settings: this.getSettings(),
+      klasifikasi: this.getKlasifikasi(),
+      users: this.getUsers(),
+      suratMasuk: this.getSuratMasuk(),
+      suratKeluar: this.getSuratKeluar(),
+      suratKeputusan: this.getSuratKeputusan(),
+      arsip: this.getArsipDigital(),
+      pkkmDokumen: this.getPkkmDokumen(),
+      activityLogs: this.getActivityLogs(),
+    };
+    return JSON.stringify(data, null, 2);
+  }
+
+  importAllDataJSON(jsonString: string, user: UserProfile): boolean {
+    try {
+      const data = JSON.parse(jsonString);
+      if (data.settings) this.set(STORAGE_KEYS.SETTINGS, data.settings);
+      if (data.klasifikasi) this.set(STORAGE_KEYS.KLASIFIKASI, data.klasifikasi);
+      if (data.users) this.set(STORAGE_KEYS.USERS, data.users);
+      if (data.suratMasuk) this.set(STORAGE_KEYS.SURAT_MASUK, data.suratMasuk);
+      if (data.suratKeluar) this.set(STORAGE_KEYS.SURAT_KELUAR, data.suratKeluar);
+      if (data.suratKeputusan) this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, data.suratKeputusan);
+      if (data.arsip) this.set(STORAGE_KEYS.ARSIP, data.arsip);
+      if (data.pkkmDokumen) this.set(STORAGE_KEYS.PKKM_DOKUMEN, data.pkkmDokumen);
+      if (data.activityLogs) this.set(STORAGE_KEYS.ACTIVITY_LOGS, data.activityLogs);
+
+      this.logActivity(user, 'Restore Basis Data', 'Pengaturan', undefined, 'Memulihkan basis data siPAKAR dari berkas JSON.');
+      return true;
+    } catch (e) {
+      console.error('Import failed:', e);
+      return false;
+    }
+  }
+
+  // --- REALTIME SYNC FROM SUPABASE ---
+  async pushLocalDataToSupabase(): Promise<{
+    success: boolean;
+    message: string;
+    pushed: { settings: boolean; suratMasuk: number; suratKeluar: number; suratKeputusan: number; arsip: number; pkkm: number };
+  }> {
+    if (!supabase) {
+      return {
+        success: false,
+        message: 'Klien Supabase tidak aktif.',
+        pushed: { settings: false, suratMasuk: 0, suratKeluar: 0, suratKeputusan: 0, arsip: 0, pkkm: 0 },
+      };
+    }
+
+    try {
+      const settings = this.getSettings();
+      const smList = this.getSuratMasuk();
+      const skelList = this.getSuratKeluar();
+      const skList = this.getSuratKeputusan();
+      const arsipList = this.getArsipDigital();
+      const pkkmList = this.getPkkmDokumen();
+
+      const { error: settErr } = await supabase
+        .from('pengaturan_madrasah')
+        .upsert({ id: 'default_setting', data: settings, updated_at: new Date().toISOString() });
+      if (settErr) throw new Error(`Gagal kirim pengaturan_madrasah: ${settErr.message}`);
+
+      if (smList.length > 0) {
+        const { error } = await supabase.from('surat_masuk').upsert(
+          smList.map((s) => ({
+            id: s.id,
+            nomor_agenda: s.nomorAgenda || '001',
+            tahun_agenda: s.tahunAgenda || new Date().getFullYear(),
+            nomor_surat_pengirim: s.nomorSuratPengirim || '-',
+            tanggal_surat: s.tanggalSurat || new Date().toISOString().split('T')[0],
+            tanggal_diterima: s.tanggalDiterima || new Date().toISOString().split('T')[0],
+            pengirim: s.pengirim || '-',
+            perihal: s.perihal || '-',
+            ringkasan: s.ringkasan || '',
+            kategori: s.kategori || 'Dinas / Resmi',
+            sifat: s.sifat || 'Biasa',
+            tujuan_internal: s.tujuanInternal || '',
+            status: s.status || 'Baru Diterima',
+            catatan: s.catatan || '',
+            file_doc: s.fileDoc || null,
+            disposisi: s.disposisi || null,
+            created_at: s.createdAt || new Date().toISOString(),
+            updated_at: s.updatedAt || new Date().toISOString(),
+            created_by: s.createdBy || 'Administrator',
+          }))
+        );
+        if (error) throw new Error(`Gagal kirim surat_masuk: ${error.message}`);
+      }
+
+      if (skelList.length > 0) {
+        const { error } = await supabase.from('surat_keluar').upsert(
+          skelList.map((s) => ({
+            id: s.id,
+            nomor_urut: s.nomorUrut || 1,
+            nomor_surat_lengkap: s.nomorSuratLengkap,
+            tahun_surat: s.tahunSurat || new Date().getFullYear(),
+            bulan_surat: s.bulanSurat || '01',
+            kode_klasifikasi: s.kodeKlasifikasi || 'PP.00',
+            tanggal_surat: s.tanggalSurat || new Date().toISOString().split('T')[0],
+            tujuan_surat: s.tujuanSurat || '-',
+            nama_penerima: s.namaPenerima || '',
+            jabatan_penerima: s.jabatanPenerima || '',
+            alamat_penerima: s.alamatPenerima || '',
+            perihal: s.perihal || '-',
+            ringkasan: s.ringkasan || '',
+            kategori: s.kategori || 'Kurikulum',
+            sifat: s.sifat || 'Biasa',
+            status: s.status || 'Telah Dikirim',
+            catatan: s.catatan || '',
+            file_doc: s.fileDoc || null,
+            created_at: s.createdAt || new Date().toISOString(),
+            updated_at: s.updatedAt || new Date().toISOString(),
+            created_by: s.createdBy || 'Administrator',
+          }))
+        );
+        if (error) throw new Error(`Gagal kirim surat_keluar: ${error.message}`);
+      }
+
+      if (skList.length > 0) {
+        const { error } = await supabase.from('surat_keputusan').upsert(
+          skList.map((sk) => ({
+            id: sk.id,
+            nomor_sk: sk.nomorSK,
+            nomor_urut: sk.nomorUrut || 1,
+            tahun: sk.tahun || new Date().getFullYear(),
+            judul: sk.judul || '-',
+            tentang: sk.tentang || '-',
+            tanggal_sk: sk.tanggalSK || new Date().toISOString().split('T')[0],
+            tahun_pelajaran: sk.tahunPelajaran || '2026/2027',
+            penandatangan: sk.penandatangan || 'Kepala Madrasah',
+            jabatan_penandatangan: sk.jabatanPenandatangan || 'Kepala Madrasah',
+            status: sk.status || 'Berlaku',
+            ringkasan: sk.ringkasan || '',
+            file_doc: sk.fileDoc || null,
+            created_at: sk.createdAt || new Date().toISOString(),
+            updated_at: sk.updatedAt || new Date().toISOString(),
+            created_by: sk.createdBy || 'Administrator',
+          }))
+        );
+        if (error) throw new Error(`Gagal kirim surat_keputusan: ${error.message}`);
+      }
+
+      if (arsipList.length > 0) {
+        const { error } = await supabase.from('arsip_digital').upsert(
+          arsipList.map((a) => ({
+            id: a.id,
+            kode_arsip: a.kodeArsip,
+            judul_arsip: a.judulArsip || '-',
+            kategori: a.kategori || 'Umum',
+            tahun: a.tahun || new Date().getFullYear(),
+            nomor_dokumen_terkait: a.nomorDokumenTerait || '',
+            deskripsi: a.deskripsi || '',
+            tags: a.tags || [],
+            file_doc: a.fileDoc,
+            lokasi_fisik: a.lokasiFisik || '',
+            created_at: a.createdAt || new Date().toISOString(),
+            updated_at: a.updatedAt || new Date().toISOString(),
+            created_by: a.createdBy || 'Administrator',
+          }))
+        );
+        if (error) throw new Error(`Gagal kirim arsip_digital: ${error.message}`);
+      }
+
+      if (pkkmList.length > 0) {
+        const { error } = await supabase.from('pkkm_dokumen').upsert(
+          pkkmList.map((d) => ({
+            id: d.id,
+            komponen_id: d.komponenId,
+            sub_menu_id: d.subMenuId,
+            sub_item_id: d.subItemId || null,
+            kode_dokumen: d.kodeDokumen,
+            judul_dokumen: d.judulDokumen,
+            tahun_ajaran: d.tahunAjaran || '2026/2027',
+            tahun: d.tahun || new Date().getFullYear(),
+            tanggal_dokumen: d.tanggalDokumen || null,
+            penanggung_jawab: d.penanggungJawab || 'Kepala Madrasah',
+            status_verifikasi: d.statusVerifikasi || 'Lengkap',
+            keterangan: d.keterangan || '',
+            file_doc: d.fileDoc || null,
+            created_at: d.createdAt || new Date().toISOString(),
+            updated_at: d.updatedAt || new Date().toISOString(),
+            created_by: d.createdBy || 'Administrator',
+          }))
+        );
+        if (error) {
+          throw new Error(
+            `Tabel pkkm_dokumen belum siap di Supabase (${error.message}). Jalankan terlebih dahulu Skrip SQL Schema terbaru di Supabase SQL Editor.`
+          );
+        }
+        try {
+          localStorage.setItem('sipas_pkkm_supabase_synced', 'true');
+        } catch {
+          // ignore
+        }
+      }
+
+      return {
+        success: true,
+        message: `Berhasil mengunggah data lokal ke Supabase: ${smList.length} surat masuk, ${skelList.length} surat keluar, ${skList.length} SK, ${arsipList.length} arsip, ${pkkmList.length} dokumen PKKRA & pengaturan kop surat.`,
+        pushed: {
+          settings: true,
+          suratMasuk: smList.length,
+          suratKeluar: skelList.length,
+          suratKeputusan: skList.length,
+          arsip: arsipList.length,
+          pkkm: pkkmList.length,
+        },
+      };
+    } catch (e: any) {
+      return {
+        success: false,
+        message: e?.message || 'Gagal mengirim data lokal ke Supabase.',
+        pushed: { settings: false, suratMasuk: 0, suratKeluar: 0, suratKeputusan: 0, arsip: 0, pkkm: 0 },
+      };
+    }
+  }
+
+  async syncFromSupabase(): Promise<{
+    success: boolean;
+    counts: { suratMasuk: number; suratKeluar: number; suratKeputusan: number; arsip: number; pkkm: number };
+    message?: string;
+  }> {
+    if (!supabase) {
+      return {
+        success: false,
+        counts: { suratMasuk: 0, suratKeluar: 0, suratKeputusan: 0, arsip: 0, pkkm: 0 },
+        message: 'Klien Supabase tidak aktif',
+      };
+    }
+
+    try {
+      // 0. Fetch pengaturan_madrasah (Identitas Madrasah, Kepala Madrasah, Operator, Password, Logo)
+      try {
+        const { data: remoteSett } = await supabase
+          .from('pengaturan_madrasah')
+          .select('data')
+          .eq('id', 'default_setting')
+          .maybeSingle();
+
+        if (remoteSett && remoteSett.data) {
+          const current = this.getSettings();
+          this.set(STORAGE_KEYS.SETTINGS, {
+            ...current,
+            ...remoteSett.data,
+            supabaseConfig: remoteSett.data.supabaseConfig || current.supabaseConfig,
+          });
+        }
+      } catch (settErr) {
+        console.warn('Sync pengaturan notice:', settErr);
+      }
+
+      // 1. Fetch surat_masuk
+      const { data: remoteSM, error: smErr } = await supabase
+        .from('surat_masuk')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (smErr && smErr.code !== '42P01') {
+        console.warn('Sync surat_masuk notice:', smErr.message);
+      }
+
+      let countSM = 0;
+      if (!smErr && Array.isArray(remoteSM)) {
+        const mappedSM: SuratMasuk[] = remoteSM.map((r: any) => ({
+          id: r.id,
+          nomorAgenda: r.nomor_agenda,
+          tahunAgenda: r.tahun_agenda,
+          nomorSuratPengirim: r.nomor_surat_pengirim,
+          tanggalSurat: r.tanggal_surat,
+          tanggalDiterima: r.tanggal_diterima,
+          pengirim: r.pengirim,
+          perihal: r.perihal,
+          ringkasan: r.ringkasan || '',
+          kategori: r.kategori,
+          sifat: r.sifat,
+          tujuanInternal: r.tujuan_internal || '',
+          status: r.status,
+          catatan: r.catatan || '',
+          fileDoc: sanitizeFileDocForPersistence(r.file_doc),
+          disposisi: r.disposisi,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+          createdBy: r.created_by,
+        }));
+        const nowMs = Date.now();
+        const pendingLocalSM = this.getSuratMasuk().filter(
+          (localItem) =>
+            !mappedSM.some((m) => m.id === localItem.id) &&
+            nowMs - new Date(localItem.createdAt || 0).getTime() < 15000
+        );
+        const mergedSM = [...pendingLocalSM, ...mappedSM];
+        this.set(STORAGE_KEYS.SURAT_MASUK, mergedSM);
+        countSM = mergedSM.length;
+
+        // Sync highest agenda counter per year
+        mergedSM.forEach((s) => {
+          const num = parseInt(s.nomorAgenda, 10);
+          if (!isNaN(num)) this.commitAgendaSuratMasuk(s.tahunAgenda, String(num));
+        });
+      }
+
+      // 2. Fetch surat_keluar
+      const { data: remoteSKel, error: skelErr } = await supabase
+        .from('surat_keluar')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (skelErr && skelErr.code !== '42P01') {
+        console.warn('Sync surat_keluar notice:', skelErr.message);
+      }
+
+      let countSKel = 0;
+      if (!skelErr && Array.isArray(remoteSKel)) {
+        const mappedSKel: SuratKeluar[] = remoteSKel.map((r: any) => ({
+          id: r.id,
+          nomorUrut: r.nomor_urut,
+          nomorSuratLengkap: r.nomor_surat_lengkap,
+          tahunSurat: r.tahun_surat,
+          bulanSurat: r.bulan_surat,
+          kodeKlasifikasi: r.kode_klasifikasi,
+          tanggalSurat: r.tanggal_surat,
+          tujuanSurat: r.tujuan_surat,
+          namaPenerima: r.nama_penerima || '',
+          jabatanPenerima: r.jabatan_penerima || '',
+          alamatPenerima: r.alamat_penerima || '',
+          perihal: r.perihal,
+          ringkasan: r.ringkasan || r.ringkasan_isi || '',
+          kategori: r.kategori || '',
+          sifat: r.sifat || r.sifat_surat || 'Biasa',
+          status: r.status || 'Terkirim',
+          catatan: r.catatan || '',
+          fileDoc: sanitizeFileDocForPersistence(r.file_doc),
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+          createdBy: r.created_by,
+        }));
+        const nowMs = Date.now();
+        const pendingLocalSKel = this.getSuratKeluar().filter(
+          (localItem) =>
+            !mappedSKel.some((m) => m.id === localItem.id) &&
+            nowMs - new Date(localItem.createdAt || 0).getTime() < 15000
+        );
+        const mergedSKel = [...pendingLocalSKel, ...mappedSKel];
+        this.set(STORAGE_KEYS.SURAT_KELUAR, mergedSKel);
+        countSKel = mergedSKel.length;
+
+        // Sync highest surat keluar counter per year
+        mergedSKel.forEach((s) => {
+          if (s.nomorUrut) this.commitSuratKeluarNumber(s.tahunSurat, s.nomorUrut);
+        });
+      }
+
+      // 3. Fetch surat_keputusan
+      const { data: remoteSK, error: skErr } = await supabase
+        .from('surat_keputusan')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (skErr && skErr.code !== '42P01') {
+        console.warn('Sync surat_keputusan notice:', skErr.message);
+      }
+
+      let countSK = 0;
+      if (!skErr && Array.isArray(remoteSK)) {
+        const mappedSK: SuratKeputusan[] = remoteSK.map((r: any) => ({
+          id: r.id,
+          nomorUrut: r.nomor_urut,
+          nomorSK: r.nomor_sk,
+          tahun: r.tahun,
+          judul: r.judul || r.judul_sk || '',
+          tentang: r.tentang || '',
+          tanggalSK: r.tanggal_sk || r.tanggal_penetapan || '',
+          tahunPelajaran: r.tahun_pelajaran || '',
+          penandatangan: r.penandatangan || r.pejabat_penetap || '',
+          jabatanPenandatangan: r.jabatan_penandatangan || 'Kepala Madrasah',
+          status: r.status || r.status_sk || 'Berlaku',
+          ringkasan: r.ringkasan || r.keterangan || '',
+          fileDoc: sanitizeFileDocForPersistence(r.file_doc),
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+          createdBy: r.created_by,
+        }));
+        const nowMs = Date.now();
+        const pendingLocalSK = this.getSuratKeputusan().filter(
+          (localItem) =>
+            !mappedSK.some((m) => m.id === localItem.id) &&
+            nowMs - new Date(localItem.createdAt || 0).getTime() < 15000
+        );
+        const mergedSK = [...pendingLocalSK, ...mappedSK];
+        this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, mergedSK);
+        countSK = mergedSK.length;
+
+        // Sync highest SK counter per year
+        mergedSK.forEach((s) => {
+          if (s.nomorUrut) {
+            const counterKey = `${STORAGE_KEYS.COUNTER_SK}${s.tahun}`;
+            const current = this.get<number>(counterKey, 0);
+            if (s.nomorUrut > current) this.set(counterKey, s.nomorUrut);
+          }
+        });
+      }
+
+      // 4. Fetch arsip_digital
+      const { data: remoteArsip, error: arsipErr } = await supabase
+        .from('arsip_digital')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (arsipErr && arsipErr.code !== '42P01') {
+        console.warn('Sync arsip_digital notice:', arsipErr.message);
+      }
+
+      let countArsip = 0;
+      if (!arsipErr && Array.isArray(remoteArsip)) {
+        const mappedArsip: ArsipDigital[] = remoteArsip.map((r: any) => ({
+          id: r.id,
+          kodeArsip: r.kode_arsip || r.id,
+          judulArsip: r.judul_arsip || '',
+          kategori: r.kategori || 'Umum',
+          tahun: r.tahun || new Date().getFullYear(),
+          nomorDokumenTerait: r.nomor_dokumen_terkait || r.nomor_dokumen || '',
+          deskripsi: r.deskripsi || r.keterangan || '',
+          tags: Array.isArray(r.tags) ? r.tags : [],
+          fileDoc: sanitizeFileDocForPersistence(r.file_doc) || {
+            fileId: 'doc-auto',
+            fileName: 'Dokumen Arsip',
+            fileType: 'application/pdf',
+            fileSize: 0,
+            driveUrl: '',
+            uploadedAt: r.created_at || new Date().toISOString(),
+          },
+          lokasiFisik: r.lokasi_fisik || '',
+          createdAt: r.created_at,
+          updatedAt: r.updated_at || r.created_at,
+          createdBy: r.created_by || 'Administrator',
+        }));
+        const nowMs = Date.now();
+        const pendingLocalArsip = this.getArsipDigital().filter(
+          (localItem) =>
+            !mappedArsip.some((m) => m.id === localItem.id) &&
+            nowMs - new Date(localItem.createdAt || 0).getTime() < 15000
+        );
+        const mergedArsip = [...pendingLocalArsip, ...mappedArsip];
+        this.set(STORAGE_KEYS.ARSIP, mergedArsip);
+        countArsip = mergedArsip.length;
+      }
+
+      // 5. Fetch pkkm_dokumen (if table exists in Supabase)
+      let countPkkm = 0;
+      try {
+        const { data: remotePkkm, error: pkkmErr } = await supabase
+          .from('pkkm_dokumen')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!pkkmErr && Array.isArray(remotePkkm)) {
+          const mappedPkkm: PkkmDokumen[] = remotePkkm.map((r: any) => ({
+            id: r.id,
+            komponenId: r.komponen_id,
+            subMenuId: r.sub_menu_id,
+            subItemId: r.sub_item_id || undefined,
+            kodeDokumen: r.kode_dokumen || r.id,
+            judulDokumen: r.judul_dokumen || '',
+            tahunAjaran: r.tahun_ajaran || '2026/2027',
+            tahun: r.tahun || new Date().getFullYear(),
+            tanggalDokumen: r.tanggal_dokumen || '',
+            penanggungJawab: r.penanggung_jawab || 'Kepala Madrasah',
+            statusVerifikasi: r.status_verifikasi || 'Lengkap',
+            keterangan: r.keterangan || '',
+            fileDoc: sanitizeFileDocForPersistence(r.file_doc),
+            createdAt: r.created_at,
+            updatedAt: r.updated_at || r.created_at,
+            createdBy: r.created_by || 'Administrator',
+          }));
+
+          const localPkkm = this.getPkkmDokumen();
+          const hasSyncedPkkmBefore = (() => {
+            try {
+              return localStorage.getItem('sipas_pkkm_supabase_synced') === 'true';
+            } catch {
+              return false;
+            }
+          })();
+
+          // First time pkkm_dokumen table is detected on Supabase: preserve & auto-push pre-existing local PKKM docs
+          const unsyncedPreExisting = !hasSyncedPkkmBefore
+            ? localPkkm.filter((localItem) => !mappedPkkm.some((m) => m.id === localItem.id))
+            : [];
+
+          if (unsyncedPreExisting.length > 0) {
+            await supabase.from('pkkm_dokumen').upsert(
+              unsyncedPreExisting.map((d) => ({
+                id: d.id,
+                komponen_id: d.komponenId,
+                sub_menu_id: d.subMenuId,
+                sub_item_id: d.subItemId || null,
+                kode_dokumen: d.kodeDokumen,
+                judul_dokumen: d.judulDokumen,
+                tahun_ajaran: d.tahunAjaran || '2026/2027',
+                tahun: d.tahun || new Date().getFullYear(),
+                tanggal_dokumen: d.tanggalDokumen || null,
+                penanggung_jawab: d.penanggungJawab || 'Kepala Madrasah',
+                status_verifikasi: d.statusVerifikasi || 'Lengkap',
+                keterangan: d.keterangan || '',
+                file_doc: d.fileDoc || null,
+                created_at: d.createdAt || new Date().toISOString(),
+                updated_at: d.updatedAt || new Date().toISOString(),
+                created_by: d.createdBy || 'Administrator',
+              }))
+            );
+          }
+
+          try {
+            localStorage.setItem('sipas_pkkm_supabase_synced', 'true');
+          } catch {
+            // ignore
+          }
+
+          const nowMs = Date.now();
+          const pendingLocalPkkm = localPkkm.filter(
+            (localItem) =>
+              !mappedPkkm.some((m) => m.id === localItem.id) &&
+              (unsyncedPreExisting.some((u) => u.id === localItem.id) ||
+                nowMs - new Date(localItem.createdAt || 0).getTime() < 15000)
+          );
+          const mergedPkkm = [...pendingLocalPkkm, ...mappedPkkm];
+          this.set(STORAGE_KEYS.PKKM_DOKUMEN, mergedPkkm);
+          countPkkm = mergedPkkm.length;
+        } else {
+          countPkkm = this.getPkkmDokumen().length;
+        }
+      } catch (pkkmErr) {
+        console.info('Sync pkkm_dokumen notice:', pkkmErr);
+        countPkkm = this.getPkkmDokumen().length;
+      }
+
+      // 6. Fetch activity_logs
+      try {
+        const { data: remoteLogs } = await supabase
+          .from('activity_logs')
+          .select('*')
+          .order('timestamp', { ascending: false })
+          .limit(100);
+
+        if (Array.isArray(remoteLogs) && remoteLogs.length > 0) {
+          const mappedLogs: ActivityLog[] = remoteLogs.map((l: any) => ({
+            id: l.id,
+            userId: l.user_id,
+            userName: l.user_name,
+            action: l.action,
+            entityType: l.entity_type,
+            entityId: l.entity_id,
+            details: l.details,
+            timestamp: l.timestamp,
+          }));
+          this.set(STORAGE_KEYS.ACTIVITY_LOGS, mappedLogs);
+        }
+      } catch (logErr) {
+        console.warn('Sync activity logs notice:', logErr);
+      }
+
+      return {
+        success: true,
+        counts: {
+          suratMasuk: countSM,
+          suratKeluar: countSKel,
+          suratKeputusan: countSK,
+          arsip: countArsip,
+          pkkm: countPkkm,
+        },
+      };
+    } catch (e: any) {
+      return {
+        success: false,
+        counts: { suratMasuk: 0, suratKeluar: 0, suratKeputusan: 0, arsip: 0, pkkm: 0 },
+        message: e?.message || 'Gagal sinkronisasi data dari Supabase',
+      };
+    }
+  }
+
+  // --- REALTIME MULTI-DEVICE SUBSCRIPTION ---
+  subscribeToRealtime(onDataChanged: () => void): () => void {
+    if (!supabase) return () => {};
+
+    try {
+      const channel = supabase
+        .channel('sipas-multi-device-sync')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public' },
+          async (payload) => {
+            console.info('[SIPAS Multi-Device Sync] Perubahan terdeteksi dari perangkat lain:', payload.table, payload.eventType);
+            await this.syncFromSupabase();
+            onDataChanged();
+          }
+        )
+        .subscribe((status) => {
+          console.info('[SIPAS Multi-Device Sync] Status channel:', status);
+        });
+
+      return () => {
+        try {
+          if (supabase) {
+            supabase.removeChannel(channel);
+          }
+        } catch (e) {
+          console.warn('Error removing channel:', e);
+        }
+      };
+    } catch (err) {
+      console.warn('Realtime subscription not supported or errored:', err);
+      return () => {};
+    }
+  }
+
+  resetToDefault(user: UserProfile): void {
+    this.memoryStore.clear();
+    localStorage.clear();
+    localStorage.setItem(SIPAS_DATA_VERSION_KEY, CURRENT_CLEAN_VERSION);
+    this.set(STORAGE_KEYS.SETTINGS, initialMadrasahSettings);
+    this.set(STORAGE_KEYS.KLASIFIKASI, initialKlasifikasiSurat);
+    this.set(STORAGE_KEYS.USERS, initialUsers);
+    this.set(STORAGE_KEYS.SURAT_MASUK, initialSuratMasuk);
+    this.set(STORAGE_KEYS.SURAT_KELUAR, initialSuratKeluar);
+    this.set(STORAGE_KEYS.SURAT_KEPUTUSAN, initialSuratKeputusan);
+    this.set(STORAGE_KEYS.ARSIP, initialArsipDigital);
+    this.set(STORAGE_KEYS.PKKM_DOKUMEN, []);
+    this.set(STORAGE_KEYS.ACTIVITY_LOGS, initialActivityLogs);
+    this.set(STORAGE_KEYS.ACTIVE_USER, initialUsers[0]);
+
+    reinitSupabaseClient(
+      initialMadrasahSettings.supabaseConfig.url,
+      initialMadrasahSettings.supabaseConfig.anonKey
+    );
+    this.logActivity(user, 'Reset Data Aplikasi', 'Pengaturan', undefined, 'Membersihkan seluruh data dan mengembalikan pengaturan standar RA AL IHSAN SOBOREJO.');
+  }
+}
+
+export const storageService = new StorageService();

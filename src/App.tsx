@@ -1,0 +1,823 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  MadrasahSettings,
+  UserProfile,
+  SuratMasuk,
+  SuratKeluar,
+  SuratKeputusan,
+  ArsipDigital,
+  PkkmDokumen,
+  PkkmKomponenId,
+  ActivityLog,
+  GoogleDriveMetadata,
+  DocumentFile,
+} from './types';
+import { getPkkmKomponenByTab } from './data/pkkmStructure';
+import { storageService } from './services/storageService';
+
+// Layout
+import Sidebar from './components/layout/Sidebar';
+import Header from './components/layout/Header';
+
+// Views
+import DashboardView from './components/dashboard/DashboardView';
+import SuratMasukList from './components/surat-masuk/SuratMasukList';
+import SuratKeluarList from './components/surat-keluar/SuratKeluarList';
+import SuratKeputusanList from './components/surat-keputusan/SuratKeputusanList';
+import ArsipDigitalList from './components/arsip/ArsipDigitalList';
+import LaporanView from './components/laporan/LaporanView';
+import PenggunaList from './components/pengguna/PenggunaList';
+import PengaturanView from './components/pengaturan/PengaturanView';
+import PkkmView from './components/pkkm/PkkmView';
+
+// Modals
+import SuratMasukModal from './components/surat-masuk/SuratMasukModal';
+import SuratMasukDetailModal from './components/surat-masuk/SuratMasukDetailModal';
+import DisposisiModal from './components/surat-masuk/DisposisiModal';
+import PrintDisposisi from './components/surat-masuk/PrintDisposisi';
+import SuratKeluarModal from './components/surat-keluar/SuratKeluarModal';
+import SuratKeluarDetailModal from './components/surat-keluar/SuratKeluarDetailModal';
+import SuratKeputusanModal from './components/surat-keputusan/SuratKeputusanModal';
+import ArsipDigitalModal from './components/arsip/ArsipDigitalModal';
+import PkkmDokumenModal from './components/pkkm/PkkmDokumenModal';
+import DocumentViewerModal from './components/common/DocumentViewerModal';
+import LoginAdminModal from './components/auth/LoginAdminModal';
+import EditBerkasModal from './components/common/EditBerkasModal';
+
+export default function App() {
+  // Navigation & Layout
+  const [currentTab, setCurrentTab] = useState<string>('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
+  // Core Data State
+  const [settings, setSettings] = useState<MadrasahSettings>(() => storageService.getSettings());
+  const [currentUser, setCurrentUser] = useState<UserProfile>(() => storageService.getActiveUser());
+  const [allUsers, setAllUsers] = useState<UserProfile[]>(() => storageService.getUsers());
+  const [suratMasukList, setSuratMasukList] = useState<SuratMasuk[]>(() => storageService.getSuratMasuk());
+  const [suratKeluarList, setSuratKeluarList] = useState<SuratKeluar[]>(() => storageService.getSuratKeluar());
+  const [skList, setSKList] = useState<SuratKeputusan[]>(() => storageService.getSuratKeputusan());
+  const [arsipList, setArsipList] = useState<ArsipDigital[]>(() => storageService.getArsipDigital());
+  const [pkkmList, setPkkmList] = useState<PkkmDokumen[]>(() => storageService.getPkkmDokumen());
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => storageService.getActivityLogs());
+
+  // Modal States - Surat Masuk
+  const [isSuratMasukModalOpen, setIsSuratMasukModalOpen] = useState(false);
+  const [suratMasukToEdit, setSuratMasukToEdit] = useState<SuratMasuk | null>(null);
+  const [isSuratMasukDetailOpen, setIsSuratMasukDetailOpen] = useState(false);
+  const [selectedSuratMasuk, setSelectedSuratMasuk] = useState<SuratMasuk | null>(null);
+  const [isDisposisiModalOpen, setIsDisposisiModalOpen] = useState(false);
+  const [suratForDisposisi, setSuratForDisposisi] = useState<SuratMasuk | null>(null);
+  const [isPrintDisposisiOpen, setIsPrintDisposisiOpen] = useState(false);
+  const [suratForPrintDisposisi, setSuratForPrintDisposisi] = useState<SuratMasuk | null>(null);
+
+  // Modal States - Surat Keluar
+  const [isSuratKeluarModalOpen, setIsSuratKeluarModalOpen] = useState(false);
+  const [suratKeluarToEdit, setSuratKeluarToEdit] = useState<SuratKeluar | null>(null);
+  const [isSuratKeluarDetailOpen, setIsSuratKeluarDetailOpen] = useState(false);
+  const [selectedSuratKeluar, setSelectedSuratKeluar] = useState<SuratKeluar | null>(null);
+
+  // Modal States - SK, Arsip & PKKM
+  const [isSKModalOpen, setIsSKModalOpen] = useState(false);
+  const [skToEdit, setSKToEdit] = useState<SuratKeputusan | null>(null);
+  const [isArsipModalOpen, setIsArsipModalOpen] = useState(false);
+  const [arsipToEdit, setArsipToEdit] = useState<ArsipDigital | null>(null);
+  const [isPkkmModalOpen, setIsPkkmModalOpen] = useState(false);
+  const [pkkmToEdit, setPkkmToEdit] = useState<PkkmDokumen | null>(null);
+  const [pkkmDefaultKomponen, setPkkmDefaultKomponen] = useState<PkkmKomponenId>('pengembangan_ra');
+  const [pkkmDefaultSubMenu, setPkkmDefaultSubMenu] = useState<string>('1');
+  const [pkkmDefaultSubItem, setPkkmDefaultSubItem] = useState<string | undefined>(undefined);
+
+  const [isDocViewerOpen, setIsDocViewerOpen] = useState(false);
+  const [docToPreview, setDocToPreview] = useState<GoogleDriveMetadata | undefined>(undefined);
+  const [previewTitle, setPreviewTitle] = useState('');
+  const [previewNomor, setPreviewNomor] = useState('');
+  const [docViewerActions, setDocViewerActions] = useState<{
+    onEditBerkas?: () => void;
+    onEditData?: () => void;
+  }>({});
+  // Edit Berkas Modal State
+  const [isEditBerkasOpen, setIsEditBerkasOpen] = useState(false);
+  const [targetBerkas, setTargetBerkas] = useState<{
+    tipe: 'surat-masuk' | 'surat-keluar' | 'surat-keputusan' | 'arsip' | 'pkkm';
+    id: string;
+    itemTitle: string;
+    itemSubtitle?: string;
+    currentFile?: DocumentFile | null;
+  } | null>(null);
+
+  // Administrator Login Modal
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
+  // Cloud Sync State
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Track whether any input/edit modal is currently open so background sync never disrupts typing
+  const isAnyModalOpen =
+    isSuratMasukModalOpen ||
+    isSuratKeluarModalOpen ||
+    isSKModalOpen ||
+    isArsipModalOpen ||
+    isPkkmModalOpen ||
+    isDisposisiModalOpen ||
+    isEditBerkasOpen ||
+    isLoginModalOpen;
+  const isAnyModalOpenRef = useRef(isAnyModalOpen);
+  isAnyModalOpenRef.current = isAnyModalOpen;
+
+  // Refresh all state from storage (preserving referential equality when unchanged)
+  const refreshData = useCallback(() => {
+    const nextSettings = storageService.getSettings();
+    setSettings((prev) => (JSON.stringify(prev) === JSON.stringify(nextSettings) ? prev : nextSettings));
+
+    const nextUsers = storageService.getUsers();
+    setAllUsers((prev) => (JSON.stringify(prev) === JSON.stringify(nextUsers) ? prev : nextUsers));
+
+    const nextMasuk = storageService.getSuratMasuk();
+    setSuratMasukList((prev) => (JSON.stringify(prev) === JSON.stringify(nextMasuk) ? prev : nextMasuk));
+
+    const nextKeluar = storageService.getSuratKeluar();
+    setSuratKeluarList((prev) => (JSON.stringify(prev) === JSON.stringify(nextKeluar) ? prev : nextKeluar));
+
+    const nextSK = storageService.getSuratKeputusan();
+    setSKList((prev) => (JSON.stringify(prev) === JSON.stringify(nextSK) ? prev : nextSK));
+
+    const nextArsip = storageService.getArsipDigital();
+    setArsipList((prev) => (JSON.stringify(prev) === JSON.stringify(nextArsip) ? prev : nextArsip));
+
+    const nextPkkm = storageService.getPkkmDokumen();
+    setPkkmList((prev) => (JSON.stringify(prev) === JSON.stringify(nextPkkm) ? prev : nextPkkm));
+
+    const nextLogs = storageService.getActivityLogs();
+    setActivityLogs((prev) => (JSON.stringify(prev) === JSON.stringify(nextLogs) ? prev : nextLogs));
+  }, []);
+
+  const handleManualSync = useCallback(async () => {
+    setIsSyncing(true);
+    await storageService.syncFromSupabase();
+    refreshData();
+    setTimeout(() => setIsSyncing(false), 600);
+  }, [refreshData]);
+
+  // Real-time Cloud Synchronization (Multi-Device Engine)
+  useEffect(() => {
+    // 1. Initial background sync
+    setIsSyncing(true);
+    storageService.syncFromSupabase().then(() => {
+      if (!isAnyModalOpenRef.current) {
+        refreshData();
+      }
+      setIsSyncing(false);
+    });
+
+    // 2. Realtime listener: triggers whenever another device modifies data in Supabase
+    const unsubscribeRealtime = storageService.subscribeToRealtime(() => {
+      if (!isAnyModalOpenRef.current) {
+        refreshData();
+      }
+    });
+
+    // 3. Multi-tab synchronization on the same browser
+    const handleStorageEvent = (e: StorageEvent) => {
+      if (e.key?.startsWith('sipas_')) {
+        storageService.invalidateCache(e.key);
+        if (!isAnyModalOpenRef.current) {
+          refreshData();
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
+    // 4. Focus & visibility sync: skipped while typing inside an active modal
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !isAnyModalOpenRef.current) {
+        storageService.syncFromSupabase().then(() => {
+          if (!isAnyModalOpenRef.current) {
+            refreshData();
+          }
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
+    // 5. Periodic polling fallback (every 5 seconds when tab is active & no modal is open)
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible' && !isAnyModalOpenRef.current) {
+        storageService.syncFromSupabase().then(() => {
+          if (!isAnyModalOpenRef.current) {
+            refreshData();
+          }
+        });
+      }
+    }, 5000);
+
+    return () => {
+      unsubscribeRealtime();
+      clearInterval(pollInterval);
+      window.removeEventListener('storage', handleStorageEvent);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+    };
+  }, [refreshData]);
+
+  const handleOpenLoginModal = () => {
+    setIsLoginModalOpen(true);
+  };
+
+  const handleLogout = () => {
+    storageService.logoutToViewer();
+    setCurrentUser(storageService.getActiveUser());
+    if (currentTab === 'pengguna' || currentTab === 'pengaturan') {
+      setCurrentTab('dashboard');
+    }
+    refreshData();
+  };
+
+  const handleLoginSuccess = (adminUser: UserProfile) => {
+    setCurrentUser(adminUser);
+    refreshData();
+  };
+
+  // Surat Masuk Handlers
+  const handleOpenAddSuratMasuk = () => {
+    setSuratMasukToEdit(null);
+    setIsSuratMasukModalOpen(true);
+  };
+
+  const handleEditSuratMasuk = (surat: SuratMasuk) => {
+    setSuratMasukToEdit(surat);
+    setIsSuratMasukModalOpen(true);
+  };
+
+  const handleDeleteSuratMasuk = (id: string) => {
+    storageService.deleteSuratMasuk(id, currentUser);
+    refreshData();
+  };
+
+  const handleViewSuratMasukDetail = (surat: SuratMasuk) => {
+    setSelectedSuratMasuk(surat);
+    setIsSuratMasukDetailOpen(true);
+  };
+
+  const handleOpenDisposisi = (surat: SuratMasuk) => {
+    setSuratForDisposisi(surat);
+    setIsDisposisiModalOpen(true);
+  };
+
+  const handleSaveDisposisi = (suratId: string, disposisiData: any) => {
+    storageService.saveDisposisi(suratId, disposisiData, currentUser);
+    refreshData();
+    const updated = storageService.getSuratMasuk().find((s) => s.id === suratId);
+    if (updated && selectedSuratMasuk?.id === suratId) {
+      setSelectedSuratMasuk(updated);
+    }
+  };
+
+  const handlePrintDisposisi = (surat: SuratMasuk) => {
+    setSuratForPrintDisposisi(surat);
+    setIsPrintDisposisiOpen(true);
+  };
+
+  // Surat Keluar Handlers
+  const handleOpenAddSuratKeluar = () => {
+    setSuratKeluarToEdit(null);
+    setIsSuratKeluarModalOpen(true);
+  };
+
+  const handleEditSuratKeluar = (surat: SuratKeluar) => {
+    setSuratKeluarToEdit(surat);
+    setIsSuratKeluarModalOpen(true);
+  };
+
+  const handleDeleteSuratKeluar = (id: string) => {
+    storageService.deleteSuratKeluar(id, currentUser);
+    refreshData();
+  };
+
+  const handleViewSuratKeluarDetail = (surat: SuratKeluar) => {
+    setSelectedSuratKeluar(surat);
+    setIsSuratKeluarDetailOpen(true);
+  };
+
+  // SK Handlers
+  const handleOpenAddSK = () => {
+    setSKToEdit(null);
+    setIsSKModalOpen(true);
+  };
+
+  const handleEditSK = (sk: SuratKeputusan) => {
+    setSKToEdit(sk);
+    setIsSKModalOpen(true);
+  };
+
+  const handleDeleteSK = (id: string) => {
+    storageService.deleteSuratKeputusan(id, currentUser);
+    refreshData();
+  };
+
+  // Arsip Handlers
+  const handleOpenAddArsip = () => {
+    setArsipToEdit(null);
+    setIsArsipModalOpen(true);
+  };
+
+  const handleEditArsip = (arsip: ArsipDigital) => {
+    setArsipToEdit(arsip);
+    setIsArsipModalOpen(true);
+  };
+
+  const handleDeleteArsip = (id: string) => {
+    storageService.deleteArsipDigital(id, currentUser);
+    refreshData();
+  };
+
+  // PKKM Handlers
+  const handleOpenAddPkkm = (
+    komponenId: PkkmKomponenId,
+    subMenuId: string,
+    subItemId?: string
+  ) => {
+    setPkkmToEdit(null);
+    setPkkmDefaultKomponen(komponenId);
+    setPkkmDefaultSubMenu(subMenuId);
+    setPkkmDefaultSubItem(subItemId);
+    setIsPkkmModalOpen(true);
+  };
+
+  const handleEditPkkm = (dok: PkkmDokumen) => {
+    setPkkmToEdit(dok);
+    setPkkmDefaultKomponen(dok.komponenId);
+    setPkkmDefaultSubMenu(dok.subMenuId);
+    setPkkmDefaultSubItem(dok.subItemId);
+    setIsPkkmModalOpen(true);
+  };
+
+  const handleDeletePkkm = (id: string) => {
+    storageService.deletePkkmDokumen(id, currentUser);
+    refreshData();
+  };
+
+  // Edit / Ganti Berkas Handlers
+  const handleOpenEditBerkasSuratMasuk = (surat: SuratMasuk) => {
+    setTargetBerkas({
+      tipe: 'surat-masuk',
+      id: surat.id,
+      itemTitle: `Agenda #${surat.nomorAgenda} · ${surat.perihal}`,
+      itemSubtitle: `Dari: ${surat.pengirim} (${surat.nomorSuratPengirim})`,
+      currentFile: surat.fileDoc,
+    });
+    setIsEditBerkasOpen(true);
+  };
+
+  const handleOpenEditBerkasSuratKeluar = (surat: SuratKeluar) => {
+    setTargetBerkas({
+      tipe: 'surat-keluar',
+      id: surat.id,
+      itemTitle: surat.nomorSuratLengkap,
+      itemSubtitle: `Tujuan: ${surat.tujuanSurat} · ${surat.perihal}`,
+      currentFile: surat.fileDoc,
+    });
+    setIsEditBerkasOpen(true);
+  };
+
+  const handleOpenEditBerkasSK = (sk: SuratKeputusan) => {
+    setTargetBerkas({
+      tipe: 'surat-keputusan',
+      id: sk.id,
+      itemTitle: sk.nomorSK,
+      itemSubtitle: sk.judul,
+      currentFile: sk.fileDoc,
+    });
+    setIsEditBerkasOpen(true);
+  };
+
+  const handleOpenEditBerkasArsip = (arsip: ArsipDigital) => {
+    setTargetBerkas({
+      tipe: 'arsip',
+      id: arsip.id,
+      itemTitle: arsip.judulArsip,
+      itemSubtitle: `Kode: ${arsip.kodeArsip} [${arsip.kategori}]`,
+      currentFile: arsip.fileDoc,
+    });
+    setIsEditBerkasOpen(true);
+  };
+
+  const handleOpenEditBerkasPkkm = (dok: PkkmDokumen) => {
+    setTargetBerkas({
+      tipe: 'pkkm',
+      id: dok.id,
+      itemTitle: dok.judulDokumen,
+      itemSubtitle: `Kode: ${dok.kodeDokumen} · TP ${dok.tahunAjaran}`,
+      currentFile: dok.fileDoc,
+    });
+    setIsEditBerkasOpen(true);
+  };
+
+  const handleSaveEditBerkas = async (newFile: DocumentFile | undefined) => {
+    if (!targetBerkas) return;
+    storageService.updateLampiranBerkas(targetBerkas.tipe, targetBerkas.id, newFile, currentUser);
+    refreshData();
+    if (selectedSuratMasuk && targetBerkas.id === selectedSuratMasuk.id) {
+      setSelectedSuratMasuk((prev) => (prev ? { ...prev, fileDoc: newFile } : null));
+    }
+    if (selectedSuratKeluar && targetBerkas.id === selectedSuratKeluar.id) {
+      setSelectedSuratKeluar((prev) => (prev ? { ...prev, fileDoc: newFile } : null));
+    }
+  };
+
+  // Generic Document Preview in Google Drive Modal
+  const handleOpenDocViewer = (
+    fileDoc: GoogleDriveMetadata,
+    title: string,
+    nomor?: string,
+    actions?: { onEditBerkas?: () => void; onEditData?: () => void }
+  ) => {
+    setDocToPreview(fileDoc);
+    setPreviewTitle(title);
+    setPreviewNomor(nomor || '');
+    setDocViewerActions(actions || {});
+    setIsDocViewerOpen(true);
+  };
+
+  // Pending letters for notification
+  const pendingMasukCount = suratMasukList.filter(
+    (s) => s.status === 'Baru Diterima' || !s.disposisi
+  ).length;
+
+  const pkkmCounts = pkkmList.reduce<Record<string, number>>((acc, item) => {
+    acc[item.komponenId] = (acc[item.komponenId] || 0) + 1;
+    return acc;
+  }, {});
+
+  const activePkkmKomponen = getPkkmKomponenByTab(currentTab);
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
+      {/* Sidebar Component */}
+      <Sidebar
+        currentTab={currentTab}
+        onSelectTab={setCurrentTab}
+        isOpen={isSidebarOpen}
+        onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
+        isMobileOpen={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+        settings={settings}
+        currentUser={currentUser}
+        pendingMasukCount={pendingMasukCount}
+        pkkmCounts={pkkmCounts}
+      />
+
+      {/* Main Content Area */}
+      <div
+        className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${
+          isSidebarOpen ? 'lg:pl-64' : 'lg:pl-20'
+        }`}
+      >
+        {/* Header Component */}
+        <Header
+          currentTab={currentTab}
+          onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
+          settings={settings}
+          currentUser={currentUser}
+          onOpenLoginModal={handleOpenLoginModal}
+          onLogout={handleLogout}
+          isSyncing={isSyncing}
+          onManualSync={handleManualSync}
+        />
+
+        {/* Viewport Content */}
+        <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {currentTab === 'dashboard' && (
+            <DashboardView
+              suratMasukList={suratMasukList}
+              suratKeluarList={suratKeluarList}
+              skList={skList}
+              arsipList={arsipList}
+              activityLogs={activityLogs}
+              settings={settings}
+              currentUser={currentUser}
+              onNavigate={setCurrentTab}
+              onAddSuratMasuk={handleOpenAddSuratMasuk}
+              onAddSuratKeluar={handleOpenAddSuratKeluar}
+              onAddSK={handleOpenAddSK}
+              onViewSuratMasuk={handleViewSuratMasukDetail}
+              onViewSuratKeluar={handleViewSuratKeluarDetail}
+            />
+          )}
+
+          {currentTab === 'surat-masuk' && (
+            <SuratMasukList
+              suratList={suratMasukList}
+              settings={settings}
+              currentUser={currentUser}
+              onAddNew={handleOpenAddSuratMasuk}
+              onEdit={handleEditSuratMasuk}
+              onDelete={handleDeleteSuratMasuk}
+              onViewDetail={handleViewSuratMasukDetail}
+              onViewDocument={(s) => {
+                if (s.fileDoc) {
+                  handleOpenDocViewer(s.fileDoc, s.perihal, s.nomorSuratPengirim, {
+                    onEditBerkas: () => handleOpenEditBerkasSuratMasuk(s),
+                    onEditData: () => handleEditSuratMasuk(s),
+                  });
+                }
+              }}
+              onOpenDisposisi={handleOpenDisposisi}
+              onPrintDisposisi={handlePrintDisposisi}
+              onPrintAgendaBook={() => setCurrentTab('laporan')}
+              onEditBerkas={handleOpenEditBerkasSuratMasuk}
+              onOpenLoginModal={handleOpenLoginModal}
+            />
+          )}
+
+          {currentTab === 'surat-keluar' && (
+            <SuratKeluarList
+              suratList={suratKeluarList}
+              settings={settings}
+              currentUser={currentUser}
+              onAddNew={handleOpenAddSuratKeluar}
+              onEdit={handleEditSuratKeluar}
+              onDelete={handleDeleteSuratKeluar}
+              onViewDetail={handleViewSuratKeluarDetail}
+              onViewDocument={(s) => {
+                if (s.fileDoc) {
+                  handleOpenDocViewer(s.fileDoc, s.perihal, s.nomorSuratLengkap, {
+                    onEditBerkas: () => handleOpenEditBerkasSuratKeluar(s),
+                    onEditData: () => handleEditSuratKeluar(s),
+                  });
+                }
+              }}
+              onPrintAgendaBook={() => setCurrentTab('laporan')}
+              onEditBerkas={handleOpenEditBerkasSuratKeluar}
+              onOpenLoginModal={handleOpenLoginModal}
+            />
+          )}
+
+          {currentTab === 'surat-keputusan' && (
+            <SuratKeputusanList
+              skList={skList}
+              settings={settings}
+              currentUser={currentUser}
+              onAddNew={handleOpenAddSK}
+              onEdit={handleEditSK}
+              onDelete={handleDeleteSK}
+              onViewDocument={(sk) => {
+                if (sk.fileDoc) {
+                  handleOpenDocViewer(sk.fileDoc, sk.judul, sk.nomorSK, {
+                    onEditBerkas: () => handleOpenEditBerkasSK(sk),
+                    onEditData: () => handleEditSK(sk),
+                  });
+                }
+              }}
+              onEditBerkas={handleOpenEditBerkasSK}
+              onOpenLoginModal={handleOpenLoginModal}
+            />
+          )}
+
+          {currentTab === 'arsip' && (
+            <ArsipDigitalList
+              arsipList={arsipList}
+              settings={settings}
+              currentUser={currentUser}
+              onAddNew={handleOpenAddArsip}
+              onEdit={handleEditArsip}
+              onDelete={handleDeleteArsip}
+              onViewDocument={(arsip) => {
+                handleOpenDocViewer(arsip.fileDoc, arsip.judulArsip, arsip.kodeArsip, {
+                  onEditBerkas: () => handleOpenEditBerkasArsip(arsip),
+                  onEditData: () => handleEditArsip(arsip),
+                });
+              }}
+              onEditBerkas={handleOpenEditBerkasArsip}
+              onOpenLoginModal={handleOpenLoginModal}
+            />
+          )}
+
+          {activePkkmKomponen && (
+            <PkkmView
+              komponenId={activePkkmKomponen.id}
+              dokumenList={pkkmList}
+              settings={settings}
+              currentUser={currentUser}
+              onAddNew={handleOpenAddPkkm}
+              onEdit={handleEditPkkm}
+              onDelete={handleDeletePkkm}
+              onViewDocument={(dok) => {
+                if (dok.fileDoc) {
+                  handleOpenDocViewer(dok.fileDoc, dok.judulDokumen, dok.kodeDokumen, {
+                    onEditBerkas: () => handleOpenEditBerkasPkkm(dok),
+                    onEditData: () => handleEditPkkm(dok),
+                  });
+                }
+              }}
+              onEditBerkas={handleOpenEditBerkasPkkm}
+              onOpenLoginModal={handleOpenLoginModal}
+            />
+          )}
+
+          {currentTab === 'laporan' && (
+            <LaporanView
+              suratMasukList={suratMasukList}
+              suratKeluarList={suratKeluarList}
+              skList={skList}
+              settings={settings}
+            />
+          )}
+
+          {currentTab === 'pengguna' && currentUser.role === 'admin' && (
+            <PenggunaList
+              users={allUsers}
+              currentUser={currentUser}
+              settings={settings}
+              onOpenLoginModal={handleOpenLoginModal}
+              onPasswordChanged={refreshData}
+            />
+          )}
+
+          {currentTab === 'pengaturan' && currentUser.role === 'admin' && (
+            <PengaturanView
+              settings={settings}
+              currentUser={currentUser}
+              onSettingsSaved={(newSettings) => {
+                setSettings(newSettings);
+                refreshData();
+              }}
+            />
+          )}
+        </main>
+
+        {/* Global Footer (Hidden on print) */}
+        <footer className="no-print mt-auto py-4 px-6 border-t border-slate-200 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2 bg-white">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-emerald-900">siPAKAR</span>
+            <span>·</span>
+            <span>{settings.namaMadrasah}</span>
+            <span>·</span>
+            <span>NSRA: {settings.nsm}</span>
+          </div>
+          <div className="text-[11px] text-slate-400">
+            Terintegrasi Google Drive Cloud & Supabase
+          </div>
+        </footer>
+      </div>
+
+      {/* --- ALL MODALS --- */}
+      {/* 1. Surat Masuk Add/Edit Modal */}
+      <SuratMasukModal
+        isOpen={isSuratMasukModalOpen}
+        onClose={() => setIsSuratMasukModalOpen(false)}
+        suratToEdit={suratMasukToEdit}
+        currentUser={currentUser}
+        onSaved={refreshData}
+      />
+
+      {/* 2. Surat Masuk Detail Modal */}
+      <SuratMasukDetailModal
+        isOpen={isSuratMasukDetailOpen}
+        onClose={() => setIsSuratMasukDetailOpen(false)}
+        surat={selectedSuratMasuk}
+        settings={settings}
+        currentUser={currentUser}
+        onEdit={handleEditSuratMasuk}
+        onDelete={handleDeleteSuratMasuk}
+        onOpenDisposisi={handleOpenDisposisi}
+        onPrintDisposisi={handlePrintDisposisi}
+        onViewDocument={(s) => {
+          if (s.fileDoc) {
+            handleOpenDocViewer(s.fileDoc, s.perihal, s.nomorSuratPengirim, {
+              onEditBerkas: () => handleOpenEditBerkasSuratMasuk(s),
+              onEditData: () => handleEditSuratMasuk(s),
+            });
+          }
+        }}
+        onEditBerkas={handleOpenEditBerkasSuratMasuk}
+      />
+
+      {/* 3. Disposisi Modal */}
+      <DisposisiModal
+        isOpen={isDisposisiModalOpen}
+        onClose={() => setIsDisposisiModalOpen(false)}
+        surat={suratForDisposisi}
+        currentUser={currentUser}
+        onSave={handleSaveDisposisi}
+      />
+
+      {/* 4. Print Disposisi Modal */}
+      <PrintDisposisi
+        isOpen={isPrintDisposisiOpen}
+        onClose={() => setIsPrintDisposisiOpen(false)}
+        surat={suratForPrintDisposisi}
+        settings={settings}
+      />
+
+      {/* 5. Surat Keluar Add/Edit Modal */}
+      <SuratKeluarModal
+        isOpen={isSuratKeluarModalOpen}
+        onClose={() => setIsSuratKeluarModalOpen(false)}
+        suratToEdit={suratKeluarToEdit}
+        settings={settings}
+        currentUser={currentUser}
+        onSaved={refreshData}
+      />
+
+      {/* 6. Surat Keluar Detail Modal */}
+      <SuratKeluarDetailModal
+        isOpen={isSuratKeluarDetailOpen}
+        onClose={() => setIsSuratKeluarDetailOpen(false)}
+        surat={selectedSuratKeluar}
+        settings={settings}
+        currentUser={currentUser}
+        onEdit={handleEditSuratKeluar}
+        onDelete={handleDeleteSuratKeluar}
+        onViewDocument={(s) => {
+          if (s.fileDoc) {
+            handleOpenDocViewer(s.fileDoc, s.perihal, s.nomorSuratLengkap, {
+              onEditBerkas: () => handleOpenEditBerkasSuratKeluar(s),
+              onEditData: () => handleEditSuratKeluar(s),
+            });
+          }
+        }}
+        onEditBerkas={handleOpenEditBerkasSuratKeluar}
+      />
+
+      {/* 7. Surat Keputusan Add/Edit Modal */}
+      <SuratKeputusanModal
+        isOpen={isSKModalOpen}
+        onClose={() => setIsSKModalOpen(false)}
+        skToEdit={skToEdit}
+        settings={settings}
+        currentUser={currentUser}
+        onSaved={refreshData}
+      />
+
+      {/* 8. Arsip Digital Add/Edit Modal */}
+      <ArsipDigitalModal
+        isOpen={isArsipModalOpen}
+        onClose={() => {
+          setIsArsipModalOpen(false);
+          setArsipToEdit(null);
+        }}
+        arsipToEdit={arsipToEdit}
+        currentUser={currentUser}
+        onSaved={refreshData}
+      />
+
+      {/* 8b. PKKM Dokumen Add/Edit Modal */}
+      <PkkmDokumenModal
+        isOpen={isPkkmModalOpen}
+        onClose={() => {
+          setIsPkkmModalOpen(false);
+          setPkkmToEdit(null);
+        }}
+        dokumenToEdit={pkkmToEdit}
+        defaultKomponenId={pkkmDefaultKomponen}
+        defaultSubMenuId={pkkmDefaultSubMenu}
+        defaultSubItemId={pkkmDefaultSubItem}
+        currentUser={currentUser}
+        onSaved={refreshData}
+      />
+
+      {/* 9. Google Drive Document Viewer Modal */}
+      <DocumentViewerModal
+        isOpen={isDocViewerOpen}
+        onClose={() => setIsDocViewerOpen(false)}
+        fileDoc={docToPreview}
+        title={previewTitle}
+        nomorSurat={previewNomor}
+        settings={settings}
+        canEdit={currentUser.role === 'admin'}
+        onEditBerkas={docViewerActions.onEditBerkas}
+        onEditData={docViewerActions.onEditData}
+      />
+
+      {/* 10. Administrator Password Login Modal */}
+      <LoginAdminModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onSuccess={handleLoginSuccess}
+        settings={settings}
+      />
+
+      {/* 11. Edit / Koreksi Berkas Modal */}
+      {targetBerkas && (
+        <EditBerkasModal
+          isOpen={isEditBerkasOpen}
+          onClose={() => {
+            setIsEditBerkasOpen(false);
+            setTargetBerkas(null);
+          }}
+          tipe={targetBerkas.tipe}
+          itemTitle={targetBerkas.itemTitle}
+          itemSubtitle={targetBerkas.itemSubtitle}
+          currentFile={targetBerkas.currentFile}
+          currentUser={currentUser}
+          onSave={handleSaveEditBerkas}
+          onPreview={(file) => {
+            handleOpenDocViewer(file, targetBerkas.itemTitle, targetBerkas.itemSubtitle);
+          }}
+        />
+      )}
+    </div>
+  );
+}

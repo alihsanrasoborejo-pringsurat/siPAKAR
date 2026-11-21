@@ -1,0 +1,254 @@
+export type UserRole = 'admin' | 'viewer' | 'operator' | 'kepala_madrasah' | 'guru';
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  nip?: string;
+  jabatan: string;
+  avatar?: string;
+  isActive: boolean;
+}
+
+export type SifatSurat = 'Biasa' | 'Penting' | 'Rahasia' | 'Segera' | 'Sangat Segera';
+
+export type StatusSuratMasuk = 
+  | 'Baru Diterima' 
+  | 'Didisposisikan' 
+  | 'Ditindaklanjuti' 
+  | 'Selesai' 
+  | 'Diarsipkan';
+
+export type StatusSuratKeluar = 
+  | 'Konsep' 
+  | 'Disetujui' 
+  | 'Telah Dikirim' 
+  | 'Diarsipkan';
+
+export type StatusSK = 'Berlaku' | 'Direvisi' | 'Dicabut' | 'Diarsipkan';
+
+export interface GoogleDriveMetadata {
+  fileId: string;
+  folderId?: string;
+  fileName: string;
+  fileSize: number; // in bytes
+  fileType: string; // e.g. application/pdf, image/jpeg
+  driveUrl: string;
+  downloadUrl?: string;
+  uploadedAt: string;
+  thumbnailUrl?: string;
+  textContent?: string; // summary of content for quick preview
+  dataBase64?: string; // Base64 data for zero-auth direct document preview across devices
+}
+
+export type DocumentFile = GoogleDriveMetadata;
+
+export interface Disposisi {
+  id: string;
+  suratMasukId: string;
+  tanggalDisposisi: string;
+  sifat: 'Biasa' | 'Penting' | 'Segera' | 'Sangat Segera' | 'Rahasia';
+  batasWaktu?: string;
+  tujuanDisposisi: string[]; // e.g. ["Waka Kurikulum", "Guru Kelas"]
+  instruksi: string[]; // e.g. ["Untuk diketahui", "Tindak lanjuti", "Hadiri/Wakili", "Siapkan bahan"]
+  catatanKepala: string;
+  diberikanOleh: string;
+  status: 'Menunggu' | 'Diproses' | 'Selesai';
+}
+
+export interface SuratMasuk {
+  id: string;
+  nomorAgenda: string; // e.g. "001", "002"
+  tahunAgenda: number; // e.g. 2026
+  nomorSuratPengirim: string;
+  tanggalSurat: string;
+  tanggalDiterima: string;
+  pengirim: string;
+  perihal: string;
+  ringkasan: string;
+  kategori: string;
+  sifat: SifatSurat;
+  tujuanInternal: string;
+  status: StatusSuratMasuk;
+  catatan?: string;
+  fileDoc?: GoogleDriveMetadata;
+  disposisi?: Disposisi;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface SuratKeluar {
+  id: string;
+  nomorUrut: number; // 1, 2, 3 ...
+  nomorSuratLengkap: string; // e.g. "001/RA.23.14.14/PP.00/01/2026"
+  tahunSurat: number; // 2026
+  bulanSurat: string; // "01", "02"
+  kodeKlasifikasi: string; // "PP.00", "KS.01.1", etc.
+  tanggalSurat: string;
+  tujuanSurat: string; // Lembaga / Instansi tujuan
+  namaPenerima?: string;
+  jabatanPenerima?: string;
+  alamatPenerima?: string;
+  perihal: string;
+  ringkasan: string;
+  kategori: string;
+  sifat: SifatSurat;
+  status: StatusSuratKeluar;
+  catatan?: string;
+  fileDoc?: GoogleDriveMetadata;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface SuratKeputusan {
+  id: string;
+  nomorSK: string; // e.g. "001 Tahun 2026"
+  nomorUrut: number;
+  tahun: number;
+  judul: string;
+  tentang: string;
+  tanggalSK: string;
+  tahunPelajaran: string; // e.g. "2026/2027"
+  penandatangan: string; // e.g. "MUIN, S.Pd.I."
+  jabatanPenandatangan: string;
+  status: StatusSK;
+  ringkasan: string;
+  fileDoc?: GoogleDriveMetadata;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface ArsipDigital {
+  id: string;
+  kodeArsip: string;
+  judulArsip: string;
+  kategori: string;
+  tahun: number;
+  nomorDokumenTerait?: string;
+  deskripsi: string;
+  tags: string[];
+  fileDoc: GoogleDriveMetadata;
+  lokasiFisik?: string; // Box / Lemari / Rak
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface KlasifikasiSurat {
+  kode: string;
+  nama: string;
+  deskripsi: string;
+}
+
+export interface KopSuratConfig {
+  baris1Instansi: string;
+  baris2Judul: string;
+  baris3Status: string;
+  baris4Alamat: string;
+  baris5Kontak: string;
+  baris6Tambahan?: string;
+  tampilkanLogo: boolean;
+  posisiLogo: 'left' | 'both' | 'right';
+  logoKananUrl?: string;
+  ukuranLogo: 'sm' | 'md' | 'lg';
+  perataanTeks: 'center' | 'left';
+  warnaJudul: 'emerald' | 'slate' | 'blue' | 'green' | 'amber';
+  gayaGarisBawah: 'double' | 'thick-thin' | 'solid' | 'none';
+  warnaGarisBawah: 'slate' | 'emerald' | 'blue' | 'green' | 'amber';
+}
+
+export interface MadrasahSettings {
+  namaMadrasah: string;
+  namaAplikasi: string;
+  nsm: string;
+  npsn: string;
+  alamat: string;
+  kecamatan: string;
+  kabupaten: string;
+  provinsi: string;
+  kodePos: string;
+  telepon: string;
+  email: string;
+  website: string;
+  kepalaMadrasah: string;
+  nipKepalaMadrasah: string;
+  operatorMadrasah: string;
+  nipOperatorMadrasah: string;
+  kodeMadrasah: string; // "RA.23.14.14"
+  formatPenomoranSK: string; // "XXX Tahun YYYY"
+  logoUrl: string;
+  kopSuratFormat: string;
+  kopSurat?: KopSuratConfig;
+  supabaseConfig: {
+    url: string;
+    anonKey: string;
+    isConnected: boolean;
+  };
+  googleDriveConfig: {
+    folderIdSuratMasuk: string;
+    folderIdSuratKeluar: string;
+    folderIdSK: string;
+    folderIdArsip: string;
+    serviceAccountEmail: string;
+    isConnected: boolean;
+    driveFolderUrl?: string; // Main Google Drive folder URL for the madrasah
+    urlSuratMasuk?: string; // Subfolder link for Surat Masuk
+    urlSuratKeluar?: string; // Subfolder link for Surat Keluar
+    urlSK?: string; // Subfolder link for SK
+    urlArsip?: string; // Subfolder link for Arsip
+    appsScriptUrl?: string; // Google Apps Script Web App /exec URL for zero-auth automated Drive upload
+    activeMode?: 'apps-script' | 'folder-link' | 'api-login';
+  };
+  adminPassword?: string; // Password to unlock Administrator mode (default: admin123)
+  izinkanNomorManual?: boolean; // Mengizinkan penomoran manual pada surat keluar, SK, dan agenda
+}
+
+export type PkkmKomponenId =
+  | 'pengembangan_ra'
+  | 'manajerial'
+  | 'kewirausahaan'
+  | 'supervisi';
+
+export type PkkmStatusVerifikasi = 'Lengkap' | 'Proses' | 'Revisi';
+
+export interface PkkmDokumen {
+  id: string;
+  komponenId: PkkmKomponenId;
+  subMenuId: string; // '1', '2', '3', ...
+  subItemId?: string; // '1', '2', '3', ...
+  kodeDokumen: string;
+  judulDokumen: string;
+  tahunAjaran: string;
+  tahun: number;
+  tanggalDokumen: string;
+  penanggungJawab: string;
+  statusVerifikasi: PkkmStatusVerifikasi;
+  keterangan: string;
+  fileDoc?: GoogleDriveMetadata;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface ActivityLog {
+  id: string;
+  userId: string;
+  userName: string;
+  action: string;
+  entityType:
+    | 'Surat Masuk'
+    | 'Surat Keluar'
+    | 'Surat Keputusan'
+    | 'Arsip Digital'
+    | 'PKKRA'
+    | 'PKKM'
+    | 'Pengaturan'
+    | 'Auth';
+  entityId?: string;
+  details: string;
+  timestamp: string;
+}

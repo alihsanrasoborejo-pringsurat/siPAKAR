@@ -56,8 +56,13 @@ function buildSupabaseClient(url: string, anonKey: string): SupabaseClient | nul
 export let supabase: SupabaseClient | null = buildSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export function reinitSupabaseClient(url: string, anonKey: string): SupabaseClient | null {
-  SUPABASE_URL = url.trim();
-  SUPABASE_ANON_KEY = anonKey.trim();
+  const nextUrl = url.trim() || ENV_SUPABASE_URL;
+  const nextKey = anonKey.trim() || ENV_SUPABASE_ANON_KEY;
+  if (supabase && nextUrl === SUPABASE_URL && nextKey === SUPABASE_ANON_KEY) {
+    return supabase;
+  }
+  SUPABASE_URL = nextUrl;
+  SUPABASE_ANON_KEY = nextKey;
   supabase = buildSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   return supabase;
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MadrasahSettings, KlasifikasiSurat, UserProfile, KopSuratConfig } from '../../types';
 import { initialMadrasahSettings, DEFAULT_LOGO_URL } from '../../data/initialData';
 import { storageService } from '../../services/storageService';
@@ -44,18 +44,20 @@ export default function PengaturanView({
   onSettingsSaved,
 }: PengaturanViewProps) {
   const [activeTab, setActiveTab] = useState<'madrasah' | 'kop' | 'penomoran' | 'integrasi' | 'backup'>('madrasah');
-  const [formData, setFormData] = useState<MadrasahSettings>({
+  const [formData, setRawFormData] = useState<MadrasahSettings>({
     ...settings,
     kopSurat: {
       ...initialMadrasahSettings.kopSurat!,
       ...(settings.kopSurat || {}),
     },
   });
+  const [isDirty, setIsDirty] = useState(false);
   const [klasifikasiList, setKlasifikasiList] = useState<KlasifikasiSurat[]>(storageService.getKlasifikasi());
   const [newKode, setNewKode] = useState('');
   const [newNama, setNewNama] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<{ type: 'success' | 'warning'; message: string } | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{
     success: boolean;
@@ -99,6 +101,24 @@ export default function PengaturanView({
 
   const canEdit = currentUser.role === 'admin';
 
+  useEffect(() => {
+    if (!isDirty) {
+      setRawFormData({
+        ...settings,
+        kopSurat: {
+          ...initialMadrasahSettings.kopSurat!,
+          ...(settings.kopSurat || {}),
+        },
+      });
+    }
+  }, [settings, isDirty]);
+
+  const updateForm = (updater: MadrasahSettings | ((prev: MadrasahSettings) => MadrasahSettings)) => {
+    setIsDirty(true);
+    setRawFormData(updater);
+  };
+  const setFormData = updateForm;
+
   const handleTestSupabase = async () => {
     setTestingConnection(true);
     setConnectionResult(null);
@@ -126,11 +146,12 @@ export default function PengaturanView({
     setSyncingData(false);
     if (res.success) {
       const latestSettings = storageService.getSettings();
-      setFormData(latestSettings);
+      setIsDirty(false);
+      setRawFormData(latestSettings);
       onSettingsSaved(latestSettings);
       setSyncResult({
         success: true,
-        message: `Sinkronisasi berhasil: ${res.counts.suratMasuk} surat masuk, ${res.counts.suratKeluar} surat keluar, ${res.counts.suratKeputusan} SK, ${res.counts.arsip} arsip, ${res.counts.pkkm} dokumen PKKRA.`,
+        message: `Sinkronisasi berhasil: ${res.counts.suratMasuk} surat masuk, ${res.counts.suratKeluar} surat keluar, ${res.counts.suratKeputusan} SK, ${res.counts.arsip} arsip, ${res.counts.pkkm} dokumen PKKRA & pengaturan kop surat.`,
       });
     } else {
       if (res.message?.toLowerCase().includes('permission denied')) {
@@ -157,12 +178,31 @@ export default function PengaturanView({
     });
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    storageService.saveSettings(formData, currentUser);
-    onSettingsSaved(formData);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
+    setSavingSettings(true);
+    setSaveFeedback(null);
+    const result = await storageService.saveSettingsAsync(formData, currentUser);
+    const latest = storageService.getSettings();
+    setIsDirty(false);
+    setRawFormData(latest);
+    onSettingsSaved(latest);
+    setSavingSettings(false);
+    if (result.cloudSynced) {
+      setSaveFeedback({
+        type: 'success',
+        message: result.message || 'Pengaturan, logo & kop surat tersimpan & tersinkron ke Cloud!',
+      });
+    } else {
+      if (result.message?.toLowerCase().includes('permission denied')) {
+        setShowSQLSchema(true);
+      }
+      setSaveFeedback({
+        type: 'warning',
+        message: result.message || 'Pengaturan tersimpan di perangkat ini (belum tersinkron ke Supabase).',
+      });
+    }
+    setTimeout(() => setSaveFeedback(null), 5000);
   };
 
   const kopData: KopSuratConfig = {
@@ -171,7 +211,7 @@ export default function PengaturanView({
   };
 
   const updateKop = (patch: Partial<KopSuratConfig>) => {
-    setFormData((prev) => ({
+    updateForm((prev) => ({
       ...prev,
       kopSurat: {
         ...initialMadrasahSettings.kopSurat!,
@@ -191,7 +231,7 @@ export default function PengaturanView({
   };
 
   const handleResetKopDefault = () => {
-    setFormData((prev) => ({
+    updateForm((prev) => ({
       ...prev,
       kopSurat: { ...initialMadrasahSettings.kopSurat! },
     }));
@@ -212,9 +252,17 @@ export default function PengaturanView({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const dataUrl = canvas.toDataURL('image/png');
+          let dataUrl = canvas.toDataURL('image/png');
+          if (dataUrl.length > 140_000) {
+            const webpUrl = canvas.toDataURL('image/webp', 0.85);
+            if (webpUrl.startsWith('data:image/webp') && webpUrl.length < dataUrl.length) {
+              dataUrl = webpUrl;
+            } else {
+              dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            }
+          }
           if (target === 'left') {
-            setFormData((prev) => ({ ...prev, logoUrl: dataUrl }));
+            updateForm((prev) => ({ ...prev, logoUrl: dataUrl }));
           } else {
             updateKop({ logoKananUrl: dataUrl });
           }
@@ -298,9 +346,20 @@ export default function PengaturanView({
           </p>
         </div>
 
-        {saveSuccess && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-100 text-emerald-800 text-xs font-semibold rounded-lg animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 text-emerald-700" /> Pengaturan berhasil disimpan!
+        {saveFeedback && (
+          <div
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg animate-in fade-in ${
+              saveFeedback.type === 'success'
+                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                : 'bg-amber-100 text-amber-900 border border-amber-300'
+            }`}
+          >
+            {saveFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+            )}
+            <span>{saveFeedback.message}</span>
           </div>
         )}
       </div>
@@ -383,9 +442,10 @@ export default function PengaturanView({
             {canEdit && (
               <button
                 type="submit"
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95"
+                disabled={savingSettings}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 disabled:opacity-60 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer"
               >
-                <Save className="w-3.5 h-3.5" /> Simpan Pengaturan
+                <Save className="w-3.5 h-3.5" /> {savingSettings ? 'Menyimpan...' : 'Simpan Pengaturan'}
               </button>
             )}
           </div>
@@ -503,10 +563,25 @@ export default function PengaturanView({
                 <input
                   type="text"
                   value={formData.logoUrl}
-                  onChange={(e) => setFormData({ ...formData, logoUrl: e.target.value })}
+                  onChange={(e) => updateForm({ ...formData, logoUrl: e.target.value })}
                   placeholder="URL atau Path Logo"
                   className="w-full mt-2 text-[11px] px-2 py-1 border border-slate-300 rounded text-center"
                 />
+                {canEdit && (
+                  <div className="flex items-center justify-center gap-2 mt-2">
+                    <label className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-md text-[11px] font-semibold cursor-pointer">
+                      <ImageIcon className="w-3 h-3" /> Unggah Logo
+                      <input type="file" accept="image/*" onChange={(e) => handleUploadLogoFile(e, 'left')} className="hidden" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => updateForm({ ...formData, logoUrl: DEFAULT_LOGO_URL })}
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-medium cursor-pointer"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Standar
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="pt-3 border-t border-slate-200 space-y-2">
@@ -614,9 +689,10 @@ export default function PengaturanView({
               {canEdit && (
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer"
+                  disabled={savingSettings}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 disabled:opacity-60 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer"
                 >
-                  <Save className="w-3.5 h-3.5" /> Simpan Kop Surat
+                  <Save className="w-3.5 h-3.5" /> {savingSettings ? 'Menyimpan...' : 'Simpan Kop Surat'}
                 </button>
               )}
             </div>
@@ -794,7 +870,7 @@ export default function PengaturanView({
                       <input
                         type="text"
                         value={formData.logoUrl}
-                        onChange={(e) => setFormData({ ...formData, logoUrl: e.target.value })}
+                        onChange={(e) => updateForm({ ...formData, logoUrl: e.target.value })}
                         placeholder="https://... atau unggah gambar"
                         className="flex-1 px-2.5 py-1.5 border border-slate-300 rounded-lg text-[11px]"
                       />
@@ -903,10 +979,12 @@ export default function PengaturanView({
             </div>
             {canEdit && (
               <button
+                type="button"
+                disabled={savingSettings}
                 onClick={handleSaveSettings}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 disabled:opacity-60 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer"
               >
-                <Save className="w-3.5 h-3.5" /> Simpan Format Penomoran
+                <Save className="w-3.5 h-3.5" /> {savingSettings ? 'Menyimpan...' : 'Simpan Format Penomoran'}
               </button>
             )}
           </div>
@@ -1194,10 +1272,12 @@ export default function PengaturanView({
             </div>
             {canEdit && (
               <button
+                type="button"
+                disabled={savingSettings}
                 onClick={handleSaveSettings}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 disabled:opacity-60 border border-amber-400/80 rounded-lg shadow-md transition-all active:scale-95 cursor-pointer"
               >
-                <Save className="w-3.5 h-3.5" /> Simpan Konfigurasi
+                <Save className="w-3.5 h-3.5" /> {savingSettings ? 'Menyimpan...' : 'Simpan Konfigurasi'}
               </button>
             )}
           </div>
@@ -1344,15 +1424,18 @@ export default function PengaturanView({
             <GoogleDriveCard
               settings={formData}
               onUpdateSettings={(cfg) => {
-                const updated = {
+                const updated: MadrasahSettings = {
                   ...formData,
                   googleDriveConfig: {
                     ...formData.googleDriveConfig,
                     ...cfg,
                   },
                 };
-                setFormData(updated);
-                onSettingsSaved(updated);
+                setRawFormData(updated);
+                setIsDirty(false);
+                void storageService.saveSettingsAsync(updated, currentUser).then(() => {
+                  onSettingsSaved(storageService.getSettings());
+                });
               }}
             />
           </div>

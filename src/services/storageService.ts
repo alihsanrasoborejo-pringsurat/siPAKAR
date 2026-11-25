@@ -187,15 +187,26 @@ class StorageService {
     }
   }
 
+  private normalizeLogoUrl(rawUrl?: string, fallback: string = DEFAULT_LOGO_URL): string {
+    const trimmed = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+    if (!trimmed) return fallback;
+    if (
+      !trimmed.startsWith('data:') &&
+      !trimmed.startsWith('http://') &&
+      !trimmed.startsWith('https://') &&
+      trimmed.includes('madrasah_logo_1794281106438')
+    ) {
+      return DEFAULT_LOGO_URL;
+    }
+    return trimmed;
+  }
+
   // --- SETTINGS ---
   getSettings(): MadrasahSettings {
     const saved = this.get<MadrasahSettings>(STORAGE_KEYS.SETTINGS, initialMadrasahSettings);
     const resolvedAppName = !saved.namaAplikasi || saved.namaAplikasi === 'SIPAS' ? 'siPAKAR' : saved.namaAplikasi;
-    const rawLogoUrl = saved.logoUrl?.trim();
-    const resolvedLogoUrl =
-      !rawLogoUrl || rawLogoUrl === '/src/assets/images/madrasah_logo_1794281106438.jpg'
-        ? DEFAULT_LOGO_URL
-        : rawLogoUrl;
+    const resolvedLogoUrl = this.normalizeLogoUrl(saved.logoUrl, DEFAULT_LOGO_URL);
+    const resolvedLogoKananUrl = this.normalizeLogoUrl(saved.kopSurat?.logoKananUrl, '');
     return {
       ...initialMadrasahSettings,
       ...saved,
@@ -208,6 +219,7 @@ class StorageService {
       kopSurat: {
         ...initialMadrasahSettings.kopSurat!,
         ...(saved.kopSurat || {}),
+        logoKananUrl: resolvedLogoKananUrl,
       },
       supabaseConfig: {
         ...initialMadrasahSettings.supabaseConfig,
@@ -249,22 +261,67 @@ class StorageService {
   }
 
   saveSettings(settings: MadrasahSettings, user?: UserProfile): void {
-    this.set(STORAGE_KEYS.SETTINGS, settings);
-    if (settings.supabaseConfig) {
-      reinitSupabaseClient(settings.supabaseConfig.url || '', settings.supabaseConfig.anonKey || '');
+    void this.saveSettingsAsync(settings, user);
+  }
+
+  async saveSettingsAsync(
+    settings: MadrasahSettings,
+    user?: UserProfile
+  ): Promise<{ cloudSynced: boolean; message?: string }> {
+    const normalizedSettings: MadrasahSettings = {
+      ...settings,
+      logoUrl: this.normalizeLogoUrl(settings.logoUrl, DEFAULT_LOGO_URL),
+      kopSurat: {
+        ...initialMadrasahSettings.kopSurat!,
+        ...(settings.kopSurat || {}),
+        logoKananUrl: this.normalizeLogoUrl(settings.kopSurat?.logoKananUrl, ''),
+      },
+    };
+
+    this.set(STORAGE_KEYS.SETTINGS, normalizedSettings);
+    if (normalizedSettings.supabaseConfig) {
+      reinitSupabaseClient(
+        normalizedSettings.supabaseConfig.url || '',
+        normalizedSettings.supabaseConfig.anonKey || ''
+      );
     }
     if (user) {
       this.logActivity(user, 'Perubahan Pengaturan', 'Pengaturan', undefined, 'Memperbarui identitas RA atau konfigurasi sistem.');
     }
 
-    // Sync to Supabase if connected
-    if (supabase) {
-      supabase
+    const latestNormalized = this.getSettings();
+    if (!supabase) {
+      return {
+        cloudSynced: false,
+        message: 'Tersimpan di perangkat ini (Supabase belum terhubung).',
+      };
+    }
+
+    try {
+      const { error } = await supabase
         .from('pengaturan_madrasah')
-        .upsert({ id: 'default_setting', data: settings, updated_at: new Date().toISOString() })
-        .then(({ error }) => {
-          if (error) console.info('Supabase settings sync notice:', error.message);
+        .upsert({
+          id: 'default_setting',
+          data: latestNormalized,
+          updated_at: new Date().toISOString(),
         });
+      if (error) {
+        console.warn('Supabase settings sync notice:', error.message);
+        return {
+          cloudSynced: false,
+          message: `Tersimpan lokal, gagal sinkron ke Supabase: ${error.message}`,
+        };
+      }
+      return {
+        cloudSynced: true,
+        message: 'Pengaturan, logo & kop surat berhasil disimpan dan disinkronkan ke semua perangkat!',
+      };
+    } catch (e: any) {
+      console.warn('Supabase settings sync error:', e);
+      return {
+        cloudSynced: false,
+        message: `Tersimpan lokal, gagal sinkron ke Supabase: ${e?.message || 'Kesalahan jaringan'}`,
+      };
     }
   }
 
@@ -1726,15 +1783,18 @@ class StorageService {
           if (settRow?.data) {
             const current = this.getSettings();
             const remoteData = settRow.data;
-            const rawRemoteLogo = typeof remoteData.logoUrl === 'string' ? remoteData.logoUrl.trim() : '';
-            const safeLogoUrl =
-              !rawRemoteLogo || rawRemoteLogo === '/src/assets/images/madrasah_logo_1794281106438.jpg'
-                ? current.logoUrl
-                : rawRemoteLogo;
+            const safeLogoUrl = this.normalizeLogoUrl(remoteData.logoUrl, current.logoUrl);
+            const safeLogoKananUrl = this.normalizeLogoUrl(remoteData.kopSurat?.logoKananUrl, '');
             this.set(STORAGE_KEYS.SETTINGS, {
               ...current,
               ...remoteData,
               logoUrl: safeLogoUrl,
+              kopSurat: {
+                ...initialMadrasahSettings.kopSurat!,
+                ...(current.kopSurat || {}),
+                ...(remoteData.kopSurat || {}),
+                logoKananUrl: safeLogoKananUrl,
+              },
               supabaseConfig: {
                 ...current.supabaseConfig,
                 ...(remoteData.supabaseConfig || {}),
@@ -1742,11 +1802,32 @@ class StorageService {
                 anonKey: remoteData.supabaseConfig?.anonKey?.trim() || current.supabaseConfig.anonKey,
                 isConnected: isSupabaseConfigured(),
               },
+              googleDriveConfig: {
+                ...current.googleDriveConfig,
+                ...(remoteData.googleDriveConfig || {}),
+                appsScriptUrl:
+                  remoteData.googleDriveConfig?.appsScriptUrl?.trim() ||
+                  current.googleDriveConfig.appsScriptUrl,
+              },
             });
+          } else if (this.isAdmin()) {
+            // Table exists & accessible, no settings row yet: auto-push active admin's settings to cloud
+            const localSettings = this.getSettings();
+            await supabase
+              .from('pengaturan_madrasah')
+              .upsert({ id: 'default_setting', data: localSettings, updated_at: new Date().toISOString() });
           }
+
           const klasRow = remoteSett.find((r: any) => r.id === 'klasifikasi_surat');
           if (Array.isArray(klasRow?.data) && klasRow.data.length > 0) {
             this.set(STORAGE_KEYS.KLASIFIKASI, klasRow.data);
+          } else if (this.isAdmin()) {
+            const localKlas = this.getKlasifikasi();
+            if (localKlas.length > 0) {
+              await supabase
+                .from('pengaturan_madrasah')
+                .upsert({ id: 'klasifikasi_surat', data: localKlas, updated_at: new Date().toISOString() });
+            }
           }
         }
       } catch (settErr) {

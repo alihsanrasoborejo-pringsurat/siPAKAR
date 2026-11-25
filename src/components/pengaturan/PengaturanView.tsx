@@ -61,11 +61,12 @@ export default function PengaturanView({
     success: boolean;
     message: string;
     missingTables?: string[];
+    permissionDeniedTables?: string[];
   } | null>(null);
   const [copiedSQL, setCopiedSQL] = useState(false);
   const [showSQLSchema, setShowSQLSchema] = useState(false);
   const [syncingData, setSyncingData] = useState(false);
-  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Manual next sequence counter state
   const currentYear = new Date().getFullYear();
@@ -106,6 +107,9 @@ export default function PengaturanView({
       formData.supabaseConfig?.anonKey
     );
     setConnectionResult(res);
+    if ((res.permissionDeniedTables && res.permissionDeniedTables.length > 0) || (res.missingTables && res.missingTables.length > 0)) {
+      setShowSQLSchema(true);
+    }
     setTestingConnection(false);
   };
 
@@ -121,11 +125,21 @@ export default function PengaturanView({
     const res = await storageService.syncFromSupabase();
     setSyncingData(false);
     if (res.success) {
-      setSyncResult(
-        `Sinkronisasi berhasil: ${res.counts.suratMasuk} surat masuk, ${res.counts.suratKeluar} surat keluar, ${res.counts.suratKeputusan} SK, ${res.counts.arsip} arsip, ${res.counts.pkkm} dokumen PKKRA.`
-      );
+      const latestSettings = storageService.getSettings();
+      setFormData(latestSettings);
+      onSettingsSaved(latestSettings);
+      setSyncResult({
+        success: true,
+        message: `Sinkronisasi berhasil: ${res.counts.suratMasuk} surat masuk, ${res.counts.suratKeluar} surat keluar, ${res.counts.suratKeputusan} SK, ${res.counts.arsip} arsip, ${res.counts.pkkm} dokumen PKKRA.`,
+      });
     } else {
-      setSyncResult(res.message || 'Gagal sinkronisasi data dari Supabase.');
+      if (res.message?.toLowerCase().includes('permission denied')) {
+        setShowSQLSchema(true);
+      }
+      setSyncResult({
+        success: false,
+        message: res.message || 'Gagal sinkronisasi data dari Supabase.',
+      });
     }
   };
 
@@ -134,7 +148,13 @@ export default function PengaturanView({
     setSyncResult(null);
     const res = await storageService.pushLocalDataToSupabase();
     setSyncingData(false);
-    setSyncResult(res.message);
+    if (!res.success && res.message?.toLowerCase().includes('permission denied')) {
+      setShowSQLSchema(true);
+    }
+    setSyncResult({
+      success: res.success,
+      message: res.message,
+    });
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -1303,9 +1323,19 @@ export default function PengaturanView({
 
               {/* Sync result notice */}
               {syncResult && (
-                <div className="p-2.5 rounded-lg border border-slate-300 bg-white text-slate-800 text-xs flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{syncResult}</span>
+                <div
+                  className={`p-2.5 rounded-lg border text-xs flex items-start gap-2 ${
+                    syncResult.success
+                      ? 'border-emerald-300 bg-white text-slate-800'
+                      : 'border-red-300 bg-red-50 text-red-900'
+                  }`}
+                >
+                  {syncResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  )}
+                  <span>{syncResult.message}</span>
                 </div>
               )}
             </div>

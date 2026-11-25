@@ -275,6 +275,14 @@ class StorageService {
 
   saveKlasifikasi(list: KlasifikasiSurat[]): void {
     this.set(STORAGE_KEYS.KLASIFIKASI, list);
+    if (supabase) {
+      supabase
+        .from('pengaturan_madrasah')
+        .upsert({ id: 'klasifikasi_surat', data: list, updated_at: new Date().toISOString() })
+        .then(({ error }) => {
+          if (error) console.info('Supabase klasifikasi sync notice:', error.message);
+        });
+    }
   }
 
   // --- USERS & AUTHENTICATION (1 ADMINISTRATOR + READ-ONLY VIEWERS) ---
@@ -552,7 +560,7 @@ class StorageService {
 
     // Sync to Supabase
     if (supabase) {
-      supabase.from('surat_masuk').insert({
+      supabase.from('surat_masuk').upsert({
         id: newItem.id,
         nomor_agenda: newItem.nomorAgenda || '001',
         tahun_agenda: newItem.tahunAgenda || new Date().getFullYear(),
@@ -751,7 +759,7 @@ class StorageService {
 
     // Sync to Supabase
     if (supabase) {
-      supabase.from('surat_keluar').insert({
+      supabase.from('surat_keluar').upsert({
         id: newItem.id,
         nomor_urut: newItem.nomorUrut || 1,
         nomor_surat_lengkap: newItem.nomorSuratLengkap || '001/RA.23.14.14/PP.00/01/2026',
@@ -907,7 +915,7 @@ class StorageService {
     );
 
     if (supabase) {
-      supabase.from('surat_keputusan').insert({
+      supabase.from('surat_keputusan').upsert({
         id: newItem.id,
         nomor_sk: newItem.nomorSK || '001 Tahun 2026',
         nomor_urut: newItem.nomorUrut || 1,
@@ -1039,7 +1047,7 @@ class StorageService {
     );
 
     if (supabase) {
-      supabase.from('arsip_digital').insert({
+      supabase.from('arsip_digital').upsert({
         id: newItem.id,
         kode_arsip: newItem.kodeArsip || `ARS-${Date.now()}`,
         judul_arsip: newItem.judulArsip || '-',
@@ -1318,7 +1326,13 @@ class StorageService {
             : `Menghapus berkas lampiran dari Agenda #${all[idx].nomorAgenda}`
         );
         if (supabase) {
-          supabase.from('surat_masuk').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+          supabase
+            .from('surat_masuk')
+            .update({ file_doc: fileDoc || null, updated_at: now })
+            .eq('id', id)
+            .then(({ error }) => {
+              if (error) console.warn('Supabase updateLampiran surat_masuk notice:', error.message);
+            });
         }
       }
     } else if (tipe === 'surat-keluar') {
@@ -1341,7 +1355,13 @@ class StorageService {
             : `Menghapus berkas lampiran dari Surat Keluar ${all[idx].nomorSuratLengkap}`
         );
         if (supabase) {
-          supabase.from('surat_keluar').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+          supabase
+            .from('surat_keluar')
+            .update({ file_doc: fileDoc || null, updated_at: now })
+            .eq('id', id)
+            .then(({ error }) => {
+              if (error) console.warn('Supabase updateLampiran surat_keluar notice:', error.message);
+            });
         }
       }
     } else if (tipe === 'surat-keputusan') {
@@ -1364,7 +1384,13 @@ class StorageService {
             : `Menghapus berkas lampiran dari SK ${all[idx].nomorSK}`
         );
         if (supabase) {
-          supabase.from('surat_keputusan').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+          supabase
+            .from('surat_keputusan')
+            .update({ file_doc: fileDoc || null, updated_at: now })
+            .eq('id', id)
+            .then(({ error }) => {
+              if (error) console.warn('Supabase updateLampiran surat_keputusan notice:', error.message);
+            });
         }
       }
     } else if (tipe === 'arsip') {
@@ -1394,7 +1420,13 @@ class StorageService {
             : `Mengosongkan berkas dokumen Arsip "${all[idx].judulArsip}"`
         );
         if (supabase) {
-          supabase.from('arsip_digital').update({ file_doc: all[idx].fileDoc, updated_at: now }).eq('id', id).then();
+          supabase
+            .from('arsip_digital')
+            .update({ file_doc: all[idx].fileDoc, updated_at: now })
+            .eq('id', id)
+            .then(({ error }) => {
+              if (error) console.warn('Supabase updateLampiran arsip_digital notice:', error.message);
+            });
         }
       }
     } else if (tipe === 'pkkm') {
@@ -1417,7 +1449,13 @@ class StorageService {
             : `Melepas berkas lampiran dari PKKRA ${all[idx].kodeDokumen}`
         );
         if (supabase) {
-          supabase.from('pkkm_dokumen').update({ file_doc: fileDoc || null, updated_at: now }).eq('id', id).then();
+          supabase
+            .from('pkkm_dokumen')
+            .update({ file_doc: fileDoc || null, updated_at: now })
+            .eq('id', id)
+            .then(({ error }) => {
+              if (error) console.warn('Supabase updateLampiran pkkm_dokumen notice:', error.message);
+            });
         }
       }
     }
@@ -1490,6 +1528,11 @@ class StorageService {
         .from('pengaturan_madrasah')
         .upsert({ id: 'default_setting', data: settings, updated_at: new Date().toISOString() });
       if (settErr) throw new Error(`Gagal kirim pengaturan_madrasah: ${settErr.message}`);
+
+      const klasifikasiList = this.getKlasifikasi();
+      await supabase
+        .from('pengaturan_madrasah')
+        .upsert({ id: 'klasifikasi_surat', data: klasifikasiList, updated_at: new Date().toISOString() });
 
       if (smList.length > 0) {
         const { error } = await supabase.from('surat_masuk').upsert(
@@ -1659,22 +1702,52 @@ class StorageService {
       };
     }
 
-    try {
-      // 0. Fetch pengaturan_madrasah (Identitas Madrasah, Kepala Madrasah, Operator, Password, Logo)
-      try {
-        const { data: remoteSett } = await supabase
-          .from('pengaturan_madrasah')
-          .select('data')
-          .eq('id', 'default_setting')
-          .maybeSingle();
+    const permissionDeniedTables: string[] = [];
+    const syncErrors: string[] = [];
+    const isPermDenied = (err: any) =>
+      Boolean(err && (err.code === '42501' || err.message?.toLowerCase().includes('permission denied')));
 
-        if (remoteSett && remoteSett.data) {
-          const current = this.getSettings();
-          this.set(STORAGE_KEYS.SETTINGS, {
-            ...current,
-            ...remoteSett.data,
-            supabaseConfig: remoteSett.data.supabaseConfig || current.supabaseConfig,
-          });
+    try {
+      // 0. Fetch pengaturan_madrasah (Identitas Madrasah, Kepala Madrasah, Operator, Password, Logo, Klasifikasi)
+      try {
+        const { data: remoteSett, error: settErr } = await supabase
+          .from('pengaturan_madrasah')
+          .select('id, data')
+          .in('id', ['default_setting', 'klasifikasi_surat']);
+
+        if (settErr) {
+          if (isPermDenied(settErr)) {
+            permissionDeniedTables.push('pengaturan_madrasah');
+          } else if (settErr.code !== '42P01') {
+            syncErrors.push(`pengaturan_madrasah: ${settErr.message}`);
+          }
+        } else if (Array.isArray(remoteSett)) {
+          const settRow = remoteSett.find((r: any) => r.id === 'default_setting');
+          if (settRow?.data) {
+            const current = this.getSettings();
+            const remoteData = settRow.data;
+            const rawRemoteLogo = typeof remoteData.logoUrl === 'string' ? remoteData.logoUrl.trim() : '';
+            const safeLogoUrl =
+              !rawRemoteLogo || rawRemoteLogo === '/src/assets/images/madrasah_logo_1794281106438.jpg'
+                ? current.logoUrl
+                : rawRemoteLogo;
+            this.set(STORAGE_KEYS.SETTINGS, {
+              ...current,
+              ...remoteData,
+              logoUrl: safeLogoUrl,
+              supabaseConfig: {
+                ...current.supabaseConfig,
+                ...(remoteData.supabaseConfig || {}),
+                url: remoteData.supabaseConfig?.url?.trim() || current.supabaseConfig.url,
+                anonKey: remoteData.supabaseConfig?.anonKey?.trim() || current.supabaseConfig.anonKey,
+                isConnected: isSupabaseConfigured(),
+              },
+            });
+          }
+          const klasRow = remoteSett.find((r: any) => r.id === 'klasifikasi_surat');
+          if (Array.isArray(klasRow?.data) && klasRow.data.length > 0) {
+            this.set(STORAGE_KEYS.KLASIFIKASI, klasRow.data);
+          }
         }
       } catch (settErr) {
         console.warn('Sync pengaturan notice:', settErr);
@@ -1686,8 +1759,13 @@ class StorageService {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (smErr && smErr.code !== '42P01') {
-        console.warn('Sync surat_masuk notice:', smErr.message);
+      if (smErr) {
+        if (isPermDenied(smErr)) {
+          permissionDeniedTables.push('surat_masuk');
+        } else if (smErr.code !== '42P01') {
+          syncErrors.push(`surat_masuk: ${smErr.message}`);
+          console.warn('Sync surat_masuk notice:', smErr.message);
+        }
       }
 
       let countSM = 0;
@@ -1736,8 +1814,13 @@ class StorageService {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (skelErr && skelErr.code !== '42P01') {
-        console.warn('Sync surat_keluar notice:', skelErr.message);
+      if (skelErr) {
+        if (isPermDenied(skelErr)) {
+          permissionDeniedTables.push('surat_keluar');
+        } else if (skelErr.code !== '42P01') {
+          syncErrors.push(`surat_keluar: ${skelErr.message}`);
+          console.warn('Sync surat_keluar notice:', skelErr.message);
+        }
       }
 
       let countSKel = 0;
@@ -1787,8 +1870,13 @@ class StorageService {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (skErr && skErr.code !== '42P01') {
-        console.warn('Sync surat_keputusan notice:', skErr.message);
+      if (skErr) {
+        if (isPermDenied(skErr)) {
+          permissionDeniedTables.push('surat_keputusan');
+        } else if (skErr.code !== '42P01') {
+          syncErrors.push(`surat_keputusan: ${skErr.message}`);
+          console.warn('Sync surat_keputusan notice:', skErr.message);
+        }
       }
 
       let countSK = 0;
@@ -1837,8 +1925,13 @@ class StorageService {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (arsipErr && arsipErr.code !== '42P01') {
-        console.warn('Sync arsip_digital notice:', arsipErr.message);
+      if (arsipErr) {
+        if (isPermDenied(arsipErr)) {
+          permissionDeniedTables.push('arsip_digital');
+        } else if (arsipErr.code !== '42P01') {
+          syncErrors.push(`arsip_digital: ${arsipErr.message}`);
+          console.warn('Sync arsip_digital notice:', arsipErr.message);
+        }
       }
 
       let countArsip = 0;
@@ -1883,6 +1976,14 @@ class StorageService {
           .from('pkkm_dokumen')
           .select('*')
           .order('created_at', { ascending: false });
+
+        if (pkkmErr) {
+          if (isPermDenied(pkkmErr)) {
+            permissionDeniedTables.push('pkkm_dokumen');
+          } else if (pkkmErr.code !== '42P01') {
+            syncErrors.push(`pkkm_dokumen: ${pkkmErr.message}`);
+          }
+        }
 
         if (!pkkmErr && Array.isArray(remotePkkm)) {
           const mappedPkkm: PkkmDokumen[] = remotePkkm.map((r: any) => ({
@@ -1988,6 +2089,36 @@ class StorageService {
         }
       } catch (logErr) {
         console.warn('Sync activity logs notice:', logErr);
+      }
+
+      if (permissionDeniedTables.length > 0) {
+        return {
+          success: false,
+          counts: {
+            suratMasuk: countSM,
+            suratKeluar: countSKel,
+            suratKeputusan: countSK,
+            arsip: countArsip,
+            pkkm: countPkkm,
+          },
+          message: `Izin akses ditolak (permission denied) pada tabel: ${permissionDeniedTables.join(
+            ', '
+          )}. Jalankan Skrip SQL Schema terbaru (yang berisi GRANT ALL ... TO anon, authenticated) di Supabase SQL Editor.`,
+        };
+      }
+
+      if (syncErrors.length > 0) {
+        return {
+          success: false,
+          counts: {
+            suratMasuk: countSM,
+            suratKeluar: countSKel,
+            suratKeputusan: countSK,
+            arsip: countArsip,
+            pkkm: countPkkm,
+          },
+          message: `Sinkronisasi sebagian gagal: ${syncErrors[0]}`,
+        };
       }
 
       return {

@@ -1,10 +1,18 @@
--- SKEMA DATABASE SIPAS MI MA'ARIF AL IHSAN SOBOREJO
--- Jalankan di menu SQL Editor pada Dashboard Supabase Anda:
--- https://supabase.com/dashboard/project/emdjxbjhrlqsficqyors/sql
--- Catatan: Skrip ini aman dijalankan ulang (idempotent) pada database yang sudah ada.
+-- ============================================================================
+-- SKEMA DATABASE siPAKAR RA AL IHSAN SOBOREJO
+-- Jalankan di menu SQL Editor pada Dashboard Supabase Project Anda.
+-- Skrip ini aman dijalankan ulang (idempotent) dan sudah mencakup:
+--   1. Pembuatan seluruh 7 tabel utama + index
+--   2. Hak akses role PostgreSQL (GRANT) agar bebas error "permission denied"
+--   3. Row Level Security (RLS) policy untuk akses API publik aplikasi
+--   4. Publikasi Supabase Realtime untuk sinkronisasi instan multi-perangkat
+-- ============================================================================
+
+-- Pastikan role Supabase memiliki akses ke schema public
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 
 -- 1. Tabel Surat Masuk
-CREATE TABLE IF NOT EXISTS surat_masuk (
+CREATE TABLE IF NOT EXISTS public.surat_masuk (
   id TEXT PRIMARY KEY,
   nomor_agenda TEXT NOT NULL,
   tahun_agenda INTEGER NOT NULL,
@@ -26,11 +34,11 @@ CREATE TABLE IF NOT EXISTS surat_masuk (
   created_by TEXT
 );
 
--- Index pencarian dan keunikan nomor agenda per tahun
-CREATE UNIQUE INDEX IF NOT EXISTS idx_surat_masuk_agenda_tahun ON surat_masuk(nomor_agenda, tahun_agenda);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_surat_masuk_agenda_tahun
+  ON public.surat_masuk(nomor_agenda, tahun_agenda);
 
 -- 2. Tabel Surat Keluar
-CREATE TABLE IF NOT EXISTS surat_keluar (
+CREATE TABLE IF NOT EXISTS public.surat_keluar (
   id TEXT PRIMARY KEY,
   nomor_urut INTEGER NOT NULL,
   nomor_surat_lengkap TEXT NOT NULL UNIQUE,
@@ -54,11 +62,11 @@ CREATE TABLE IF NOT EXISTS surat_keluar (
   created_by TEXT
 );
 
--- Index nomor urut surat keluar per tahun
-CREATE UNIQUE INDEX IF NOT EXISTS idx_surat_keluar_urut_tahun ON surat_keluar(nomor_urut, tahun_surat);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_surat_keluar_urut_tahun
+  ON public.surat_keluar(nomor_urut, tahun_surat);
 
 -- 3. Tabel Surat Keputusan (SK)
-CREATE TABLE IF NOT EXISTS surat_keputusan (
+CREATE TABLE IF NOT EXISTS public.surat_keputusan (
   id TEXT PRIMARY KEY,
   nomor_sk TEXT NOT NULL UNIQUE,
   nomor_urut INTEGER NOT NULL,
@@ -78,7 +86,7 @@ CREATE TABLE IF NOT EXISTS surat_keputusan (
 );
 
 -- 4. Tabel Arsip Digital
-CREATE TABLE IF NOT EXISTS arsip_digital (
+CREATE TABLE IF NOT EXISTS public.arsip_digital (
   id TEXT PRIMARY KEY,
   kode_arsip TEXT NOT NULL UNIQUE,
   judul_arsip TEXT NOT NULL,
@@ -94,8 +102,8 @@ CREATE TABLE IF NOT EXISTS arsip_digital (
   created_by TEXT
 );
 
--- 5. Tabel Dokumen PKKM (Penilaian Kinerja Kepala Madrasah)
-CREATE TABLE IF NOT EXISTS pkkm_dokumen (
+-- 5. Tabel Dokumen PKKRA (Penilaian Kinerja Kepala Raudlatul Athfal)
+CREATE TABLE IF NOT EXISTS public.pkkm_dokumen (
   id TEXT PRIMARY KEY,
   komponen_id TEXT NOT NULL,
   sub_menu_id TEXT NOT NULL,
@@ -114,18 +122,20 @@ CREATE TABLE IF NOT EXISTS pkkm_dokumen (
   created_by TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_pkkm_dokumen_komponen ON pkkm_dokumen(komponen_id, sub_menu_id);
-CREATE INDEX IF NOT EXISTS idx_pkkm_dokumen_kode ON pkkm_dokumen(kode_dokumen);
+CREATE INDEX IF NOT EXISTS idx_pkkm_dokumen_komponen
+  ON public.pkkm_dokumen(komponen_id, sub_menu_id);
+CREATE INDEX IF NOT EXISTS idx_pkkm_dokumen_kode
+  ON public.pkkm_dokumen(kode_dokumen);
 
--- 6. Tabel Pengaturan Madrasah (termasuk konfigurasi Kop Surat)
-CREATE TABLE IF NOT EXISTS pengaturan_madrasah (
+-- 6. Tabel Pengaturan RA (Identitas, Kop Surat, Konfigurasi Apps Script)
+CREATE TABLE IF NOT EXISTS public.pengaturan_madrasah (
   id TEXT PRIMARY KEY DEFAULT 'default_setting',
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- 7. Tabel Log Aktivitas
-CREATE TABLE IF NOT EXISTS activity_logs (
+CREATE TABLE IF NOT EXISTS public.activity_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT,
   user_name TEXT,
@@ -136,58 +146,86 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   timestamp TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Aktifkan Row Level Security (RLS) dengan kebijakan publik untuk REST API
-ALTER TABLE surat_masuk ENABLE ROW LEVEL SECURITY;
-ALTER TABLE surat_keluar ENABLE ROW LEVEL SECURITY;
-ALTER TABLE surat_keputusan ENABLE ROW LEVEL SECURITY;
-ALTER TABLE arsip_digital ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pkkm_dokumen ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pengaturan_madrasah ENABLE ROW LEVEL SECURITY;
-ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
+-- ============================================================================
+-- 8. GRANT HAK AKSES TABEL KE ROLE anon, authenticated, service_role
+-- (Wajib agar tidak muncul error "permission denied for table surat_masuk")
+-- ============================================================================
+GRANT ALL PRIVILEGES ON TABLE public.surat_masuk TO anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON TABLE public.surat_keluar TO anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON TABLE public.surat_keputusan TO anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON TABLE public.arsip_digital TO anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON TABLE public.pkkm_dokumen TO anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON TABLE public.pengaturan_madrasah TO anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON TABLE public.activity_logs TO anon, authenticated, service_role;
 
-DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON surat_masuk;
-CREATE POLICY "Allow public read-write for SIPAS" ON surat_masuk FOR ALL USING (true) WITH CHECK (true);
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 
-DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON surat_keluar;
-CREATE POLICY "Allow public read-write for SIPAS" ON surat_keluar FOR ALL USING (true) WITH CHECK (true);
+-- ============================================================================
+-- 9. ROW LEVEL SECURITY (RLS) UNTUK MULTI-PERANGKAT
+-- ============================================================================
+ALTER TABLE public.surat_masuk ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.surat_keluar ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.surat_keputusan ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.arsip_digital ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pkkm_dokumen ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pengaturan_madrasah ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON surat_keputusan;
-CREATE POLICY "Allow public read-write for SIPAS" ON surat_keputusan FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON public.surat_masuk;
+CREATE POLICY "Allow public read-write for SIPAS"
+  ON public.surat_masuk FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON arsip_digital;
-CREATE POLICY "Allow public read-write for SIPAS" ON arsip_digital FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON public.surat_keluar;
+CREATE POLICY "Allow public read-write for SIPAS"
+  ON public.surat_keluar FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON pkkm_dokumen;
-CREATE POLICY "Allow public read-write for SIPAS" ON pkkm_dokumen FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON public.surat_keputusan;
+CREATE POLICY "Allow public read-write for SIPAS"
+  ON public.surat_keputusan FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON pengaturan_madrasah;
-CREATE POLICY "Allow public read-write for SIPAS" ON pengaturan_madrasah FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON public.arsip_digital;
+CREATE POLICY "Allow public read-write for SIPAS"
+  ON public.arsip_digital FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
-DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON activity_logs;
-CREATE POLICY "Allow public read-write for SIPAS" ON activity_logs FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON public.pkkm_dokumen;
+CREATE POLICY "Allow public read-write for SIPAS"
+  ON public.pkkm_dokumen FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
--- 8. Aktifkan Supabase Realtime untuk sinkronisasi instan multi-perangkat (Websocket Push)
+DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON public.pengaturan_madrasah;
+CREATE POLICY "Allow public read-write for SIPAS"
+  ON public.pengaturan_madrasah FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public read-write for SIPAS" ON public.activity_logs;
+CREATE POLICY "Allow public read-write for SIPAS"
+  ON public.activity_logs FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+-- ============================================================================
+-- 10. SUPABASE REALTIME MULTI-PERANGKAT + RELOAD SCHEMA CACHE
+-- ============================================================================
 DO $$
 BEGIN
   BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE surat_masuk;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.surat_masuk;
   EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE surat_keluar;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.surat_keluar;
   EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE surat_keputusan;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.surat_keputusan;
   EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE arsip_digital;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.arsip_digital;
   EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE pkkm_dokumen;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.pkkm_dokumen;
   EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE pengaturan_madrasah;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.pengaturan_madrasah;
   EXCEPTION WHEN OTHERS THEN NULL; END;
   BEGIN
-    ALTER PUBLICATION supabase_realtime ADD TABLE activity_logs;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.activity_logs;
   EXCEPTION WHEN OTHERS THEN NULL; END;
 END $$;
+
+NOTIFY pgrst, 'reload schema';
